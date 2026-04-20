@@ -40,6 +40,12 @@ graph_id = "agent"
 **Required fields per entry:** `description`, `graph_id`.
 **Optional fields:** `url`, `headers`.
 
+### `get_available_agent_names() -> list[str]`
+
+Returns a sorted list of available agent names by scanning `~/.deepagents/` for real subdirectories. Symlinks are excluded so dangling links do not masquerade as agents. Filesystem errors (missing parent, permission denied, broken entries) are logged and surfaced as an empty list rather than raised — callers show an empty modal instead of crashing.
+
+**Returns:** Sorted list of agent name strings. Empty when no agents exist or the directory is unreadable.
+
 ### `list_agents(*, output_format: OutputFormat = "text") -> None`
 
 Lists all available agents found in `settings.user_deepagents_dir`. Prints a Rich table or JSON output.

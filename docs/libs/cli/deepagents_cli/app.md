@@ -9,10 +9,11 @@ This module defines the main Textual UI application (`DeepAgentsApp`) for `deepa
 - Status bar with mode, model, token counts, and git branch
 - Welcome banner
 - Approval menus for Human-in-the-Loop (HITL) tool confirmations
-- Model selector, thread selector, theme selector, and MCP viewer modals
+- Model selector, thread selector, theme selector, MCP viewer, and agent selector modals
 - Token tracking and display
 - Deferred server startup with background workers
 - Session state management (thread IDs, auto-approve)
+- Hot-swapping between agents via `/agents` without restarting the CLI
 - iTerm2 cursor guide workaround for visual compatibility
 
 ## Classes
@@ -39,7 +40,7 @@ An action (model switch, thread switch, chat output) deferred until the current 
 | `kind` | `DeferredActionKind` | Identity key for deduplication |
 | `execute` | `Callable[[], Awaitable[None]]` | Async callable that performs the actual work |
 
-`DeferredActionKind` is a `Literal` of `"model_switch"`, `"thread_switch"`, `"chat_output"`.
+`DeferredActionKind` is a `Literal` of `"model_switch"`, `"thread_switch"`, `"chat_output"`, `"agent_switch"`.
 
 ### `TextualTokenTracker`
 
@@ -92,6 +93,7 @@ The main Textual application. Manages the full TUI lifecycle.
 **Inner Messages:**
 - `ServerReady` — Posted when the background server-startup worker succeeds. Contains `agent`, `server_proc`, and `mcp_server_info`.
 - `ServerStartFailed` — Posted when the background server-startup worker fails. Contains `error`.
+- `AgentSwitched` — Posted after a successful agent swap via `_switch_agent`; carries the new agent name for display.
 
 **Constructor Parameters:**
 
@@ -111,6 +113,37 @@ The main Textual application. Manages the full TUI lifecycle.
 | `server_kwargs` | `dict[str, Any] \| None` | Kwargs for deferred server startup |
 | `mcp_preload_kwargs` | `dict[str, Any] \| None` | Kwargs for `_preload_session_mcp_server_info` |
 | `model_kwargs` | `dict[str, Any] \| None` | Kwargs for deferred `create_model()` |
+
+## Agent Switching
+
+`DeepAgentsApp` supports hot-swapping between agents installed in `~/.deepagents/` via the `/agents` slash command without restarting the CLI.
+
+### `_switch_agent(agent_name: str) -> None`
+
+Orchestrates the three-phase agent switch in a background worker:
+1. **UI teardown** — guards against re-entry and blocks if a task is mid-run.
+2. **Server restart** — calls `_restart_server_for_agent_swap(agent_name)` which stages the new `assistant_id` in the environment and calls `ServerProcess.restart()`.
+3. **Confirmation + state reset** — resets the thread, refreshes skill discovery, and displays a confirmation hint. On failure, performs rollback.
+
+**Guards:** Disabled in remote-server mode (`--remote`). Prevents re-entry via a lock.
+
+### `_restart_server_for_agent_swap(agent_name: str) -> None`
+
+Low-level helper that stages the new `assistant_id` in the subprocess environment and calls `ServerProcess.restart()`. Called by `_switch_agent` during step 2.
+
+### `_resolve_agent_arg` (in `main.py`)
+
+Determines the agent to launch with the following precedence:
+1. Explicit `-a / --agent` flag.
+2. Skipped entirely when `-r / --remote` is present.
+3. `[agents].recent` from `config.toml` if that directory still exists.
+4. Default agent name (`"agent"`).
+
+This ensures subcommands like `threads list` do not accidentally inherit the recent agent.
+
+### `save_recent_agent` / `load_recent_agent` (in `model_config.py`)
+
+Persist and retrieve the most recently used agent name under `[agents].recent` in `config.toml`. Built on the generalized `_save_toml_field(section, field, value)` helper (same read-modify-write logic used for `[ui].theme`).
 
 ## Module-Level Functions
 

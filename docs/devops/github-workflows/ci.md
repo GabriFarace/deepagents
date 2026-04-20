@@ -57,18 +57,18 @@ Each runs `_lint.yml` for the corresponding package directory when that package 
 
 ### 3. Test Jobs
 
-Each runs `_test.yml` over a Python version matrix when that package has changed:
+Each runs `_test.yml` over a Python version matrix when that package has changed. Callers pass a JSON array to `python-versions` and the matrix is expanded inside `_test.yml`; each job renders as a **single parent row** in the Actions UI with child rows per version/OS leg.
 
-| Job | Directory | Python Matrix | Coverage |
-|---|---|---|---|
-| `test-deepagents` | `libs/deepagents` | 3.11, 3.12, 3.13, 3.14 | 3.12 only |
-| `test-cli` | `libs/cli` | 3.11, 3.12, 3.13, 3.14 | 3.12 only |
-| `test-evals` | `libs/evals` | 3.12, 3.13, 3.14 | 3.12 only |
-| `test-daytona` | `libs/partners/daytona` | 3.11, 3.12, 3.13, 3.14 | 3.12 only |
-| `test-modal` | `libs/partners/modal` | 3.11, 3.12, 3.13, 3.14 | 3.12 only |
-| `test-runloop` | `libs/partners/runloop` | 3.11, 3.12, 3.13, 3.14 | 3.12 only |
+| Job | Directory | Python Matrix | Extra Legs | Coverage leg |
+|---|---|---|---|---|
+| `test-deepagents` | `libs/deepagents` | 3.11, 3.12, 3.13, 3.14 on ubuntu | Windows 3.13 via `extra-configurations` | 3.12 / ubuntu |
+| `test-cli` | `libs/cli` | 3.11, 3.12, 3.13, 3.14 | — | 3.12 / ubuntu |
+| `test-evals` | `libs/evals` | 3.12, 3.13, 3.14 | — | 3.12 / ubuntu |
+| `test-daytona` | `libs/partners/daytona` | 3.11, 3.12, 3.13, 3.14 | — | 3.12 / ubuntu |
+| `test-modal` | `libs/partners/modal` | 3.11, 3.12, 3.13, 3.14 | — | 3.12 / ubuntu |
+| `test-runloop` | `libs/partners/runloop` | 3.11, 3.12, 3.13, 3.14 | — | 3.12 / ubuntu |
 
-All test matrices use `fail-fast: false` so failures in one Python version don't cancel the others.
+The former standalone `test-deepagents-windows` job has been removed; Windows coverage is now folded into `test-deepagents` via the `extra-configurations` input. All test matrices use `fail-fast: false` so failures in one Python version don't cancel the others.
 
 ### 4. Benchmark Jobs
 

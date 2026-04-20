@@ -27,6 +27,7 @@ The widgets are built on the [Textual](https://textual.textualize.io/) framework
 | `thread_selector.py` | `ThreadSelectorScreen` | `/threads` slash command |
 | `theme_selector.py` | `ThemeSelectorScreen` | `/theme` slash command |
 | `mcp_viewer.py` | `MCPViewerScreen` | `/mcp` slash command |
+| `agent_selector.py` | `AgentSelectorScreen` | `/agents` slash command |
 | `ask_user.py` | `AskUserMenu` | `ask_user` tool during agent execution |
 | `approval.py` | `ApprovalMenu` | Tool calls requiring HITL approval |
 

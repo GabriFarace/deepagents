@@ -23,6 +23,14 @@ Maps sandbox provider names to their default working directories:
 | `modal` | `/workspace` |
 | `runloop` | `/home/user` |
 
+### LangSmith snapshot constants
+
+| Constant | Value | Description |
+|---|---|---|
+| `_LANGSMITH_DEFAULT_SNAPSHOT` | `"deepagents-cli"` | Default snapshot name when none is specified |
+| `_LANGSMITH_DEFAULT_IMAGE` | *(Docker image string)* | Default Docker image for building snapshots |
+| `_LANGSMITH_DEFAULT_FS_CAPACITY_BYTES` | `16 GiB` | Default filesystem capacity for new snapshots |
+
 ## Functions
 
 ### `get_default_working_dir(sandbox_type: str) -> str | None`
@@ -65,6 +73,13 @@ Creates or retrieves a sandbox backend and optionally runs a setup script.
 **Returns:** `(backend, sandbox_id)` where `sandbox_id` is the ID of the created/retrieved sandbox (or `None` for local sandboxes).
 
 **Provider loading:** Uses `importlib.import_module` to load provider-specific modules dynamically, enabling optional extras without hard dependencies (e.g., `langchain-agentcore-codeinterpreter` only needed for `agentcore`).
+
+**LangSmith provider — snapshot-based API:** The `_LangSmithProvider` now uses the snapshot-based LangSmith SDK API (`create_snapshot` / `create_sandbox(snapshot_id=...)`) instead of the old template API. The `get_or_create` flow:
+1. Resolves a snapshot ID via env var `LANGSMITH_SANDBOX_SNAPSHOT_ID` (highest priority, skips name lookup).
+2. Falls back to `LANGSMITH_SANDBOX_SNAPSHOT_NAME` env var, then the `snapshot` kwarg, then `_LANGSMITH_DEFAULT_SNAPSHOT`.
+3. Calls `_ensure_snapshot(name, image, capacity)` to list existing snapshots by name. Only `status == "ready"` snapshots are accepted; a matching-name snapshot in a non-ready state raises rather than triggering a duplicate build.
+4. If no matching snapshot exists, calls `create_snapshot` with the Docker image and filesystem capacity, blocking until the snapshot is ready.
+5. Boots the sandbox from the resolved snapshot ID.
 
 ### `cleanup_sandbox(sandbox_type: str, sandbox_id: str, was_existing: bool = False) -> None`
 

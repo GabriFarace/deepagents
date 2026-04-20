@@ -90,8 +90,10 @@ Returns `PromptResponse(stop_reason="end_turn")` or `"cancelled"` on cancellatio
 ##### `_reset_agent(session_id: str) -> None`
 Re-creates the agent. If the factory is a `CompiledStateGraph`, assigns it directly. If it is a callable factory, constructs `AgentSessionContext` from the current session's `cwd`, `mode`, and `model`, then calls the factory.
 
-##### `_build_config_options(session_id: str) -> list[SessionConfigOption]`
-Builds the list of `SessionConfigOption` objects combining mode and model selectors, using the current session's selected values.
+##### `_build_config_options(session_id: str) -> list[SessionConfigOptionSelect | SessionConfigOption]`
+Builds the list of config option objects combining mode and model selectors, using the current session's selected values.
+
+**ACP v0.9 compatibility:** `agent-client-protocol` v0.9.0 removed the `SessionConfigOption` wrapper type; config options are now bare `SessionConfigOptionSelect` instances. `deepagents-acp` uses a conditional import so it works with both v0.8.x (with wrapper) and v0.9.0+ (without). When `SessionConfigOption` is importable, options are wrapped as `SessionConfigOption(root=...)`. When not available (v0.9.0+), bare `SessionConfigOptionSelect` instances are appended directly.
 
 ##### `_handle_interrupts(current_state, session_id) -> list[dict]`
 Processes LangGraph interrupt nodes. For each interrupt, reads `action_requests`, checks the `_allowed_command_types` allowlist, and either auto-approves or calls `client.request_permission()`. Maps the client's response (`approve`, `approve_always`, `reject`) to `{"type": "approve"}` / `{"type": "reject"}` decisions. On `approve_always`, stores the command signature in `_allowed_command_types[session_id]` for future auto-approval.

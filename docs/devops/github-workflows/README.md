@@ -45,6 +45,7 @@ All workflows live in `.github/workflows/`. The repository uses a layered approa
 |---|---|---|
 | [`auto-label-by-package.yml`](./auto-label-by-package.md) | issue opened/edited | Applies package labels based on "Area" section in issue body |
 | [`tag-external-issues.yml`](./tag-external-issues.md) | issue opened, workflow_dispatch | Tags issues as external/internal; applies contributor tier labels |
+| [`close_unchecked_issues.yml`](./close_unchecked_issues.md) | issue opened | Auto-closes issues that bypass the template or omit required checkboxes |
 
 ### Evaluation & Benchmarking
 
@@ -61,7 +62,7 @@ All workflows live in `.github/workflows/`. The repository uses a layered approa
 
 ## Reusable Workflow Pattern
 
-The `_lint.yml`, `_test.yml`, and `_benchmark.yml` workflows are prefixed with `_` to signal they are reusable base workflows. They accept inputs for `working-directory` and `python-version`, making it trivial to add CI for new packages in `ci.yml` without duplicating logic.
+The `_lint.yml`, `_test.yml`, and `_benchmark.yml` workflows are prefixed with `_` to signal they are reusable base workflows. They accept `working-directory` as the primary input. `_test.yml` accepts `python-versions` (JSON array) and `extra-configurations` so the full test matrix — including cross-OS legs — is owned by the reusable workflow rather than each caller, making it trivial to add CI for new packages in `ci.yml` without duplicating logic.
 
 ## Common Local Action
 

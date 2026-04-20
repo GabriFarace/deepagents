@@ -86,6 +86,7 @@ Builds the full argument parser and parses `sys.argv`. Uses a custom `_make_help
 | `--clear-default-model` | Clear the persisted default model |
 | `-m / --message` | Initial prompt to auto-submit |
 | `-n / --non-interactive` | Run a single task non-interactively and exit |
+| `--max-turns N` | Maximum number of agentic turns before stopping (requires `-n` or piped stdin). Clamped to `_MAX_HITL_ITERATIONS = 50`. Exits with code 2 if used without non-interactive mode. Useful for CI/CD pipelines to prevent runaway agents. |
 | `-q / --quiet` | Clean output for piping |
 | `--no-stream` | Buffer full response before writing to stdout |
 | `-y / --auto-approve` | Auto-approve all tool calls |

@@ -36,12 +36,14 @@ MemoryMiddleware(
     *,
     backend: BACKEND_TYPES,
     sources: list[str],
+    add_cache_control: bool = False,
 )
 ```
 
 **Parameters:**
 - `backend` — Backend instance or factory function.
 - `sources` — List of file paths to load (e.g., `["~/.deepagents/AGENTS.md", "./.deepagents/AGENTS.md"]`). Display names are derived from paths. Sources are loaded in order and concatenated.
+- `add_cache_control` — When `True`, tags the last system-message content block with `cache_control: {"type": "ephemeral"}` when the active model is `ChatAnthropic`. This creates a **second prompt-cache breakpoint** that pairs with `AnthropicPromptCachingMiddleware`'s breakpoint on the static system prompt, keeping the memory block boundary cached across turns (without this, memory content falls outside the cache boundary and gets re-written every turn, reducing cache hit rate from ~99.8% to ~60% on turn 2). No-ops on non-Anthropic models; Bedrock and Vertex wrappers do not qualify. The check is done at runtime via `request.model` so it correctly follows middleware-level model overrides.
 
 ### Methods
 

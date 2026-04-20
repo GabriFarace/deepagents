@@ -75,11 +75,14 @@ Ensures `metadata` field is a `dict[str, str]`. Rejects non-dict values with a w
 ### `_format_skill_annotations(skill) -> str`
 Builds a `"License: X, Compatibility: Y"` annotation string from optional skill fields.
 
+### `_skill_metadata_from_response(response, skill_dir_path, skill_md_path) -> SkillMetadata | None`
+Decodes a `SKILL.md` download response into `SkillMetadata`. Logs a warning for any unexpected failure (parse error, invalid name, unreadable bytes) so silently dropped skills surface in logs. Returns `None` for `file_not_found` responses (not every subdirectory is a skill) without logging.
+
 ### `_list_skills(backend, source_path) -> list[SkillMetadata]`
-Synchronous skill discovery. Scans `source_path` via `backend.ls()`, finds subdirectories, downloads their `SKILL.md` files in a batch, parses each one.
+Synchronous skill discovery. Scans `source_path` via `backend.ls()`, finds subdirectories, downloads their `SKILL.md` files in a batch, parses each one. Backend paths are normalized via `to_posix_path()` before being passed to `PurePosixPath` to handle Windows-native backslash paths (fixes skill name validation and system prompt path rendering on Windows).
 
 ### `_alist_skills(backend, source_path) -> list[SkillMetadata]`
-Async version using `backend.als()` and `backend.adownload_files()`.
+Async version using `backend.als()` and `backend.adownload_files()`. Same Windows path normalization as `_list_skills`.
 
 ### `SKILLS_SYSTEM_PROMPT`
 Template injected into the system prompt. Includes skill locations, skill listing with paths, and detailed instructions for the progressive disclosure workflow (recognize → read full instructions → follow → use helper scripts).
@@ -115,7 +118,7 @@ Formats skill locations and skill list from state, builds the skills section, an
 Calls `modify_request` and forwards to handler.
 
 #### `_format_skills_locations() -> str`
-Formats source paths for display: `"**User Skills**: /skills/user/ (higher priority)"`.
+Formats source paths for display: `"**User Skills**: /skills/user/ (higher priority)"`. Source paths are normalized via `to_posix_path()` before display to handle Windows backslash paths.
 
 #### `_format_skills_list(skills) -> str`
 Formats skill metadata as a bullet list with name, description, annotations, and the path to read full instructions.
@@ -125,5 +128,6 @@ Formats skill metadata as a bullet list with name, description, annotations, and
 - `yaml` — YAML frontmatter parsing
 - `pathlib.PurePosixPath` — cross-platform path construction
 - `langchain.agents.middleware.types` — `AgentMiddleware`, `PrivateStateAttr`
-- `deepagents.backends.protocol` — `LsResult`, `BACKEND_TYPES`
+- `deepagents.backends.protocol` — `LsResult`, `BACKEND_TYPES`, `FileDownloadResponse`, `FILE_NOT_FOUND`
+- `deepagents.backends.utils.to_posix_path` — normalizes Windows backslash paths before `PurePosixPath` processing
 - `deepagents.middleware._utils.append_to_system_message`

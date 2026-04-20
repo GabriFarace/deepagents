@@ -54,6 +54,10 @@ Large agent-facing description of the `task` tool. Includes:
 ### `_EXCLUDED_STATE_KEYS`
 `{"messages", "todos", "structured_response", "skills_metadata", "memory_contents"}` — State keys filtered out when passing state to sub-agents and when returning updates. Prevents parent state from leaking to child agents and avoids conflicts with non-reduceable keys.
 
+### `_subagent_tracing_context() -> Generator`
+
+A context manager that tags subagent runs with `ls_agent_type="subagent"` in the LangSmith tracing metadata. This mirrors LangChain's `ls_agent_type="root"` tagging behavior on the main agent, enabling trace display features in LangSmith to distinguish root from sub-agent runs. All other current tracing-context fields (parent, client, tags, etc.) are forwarded unchanged so the enclosing context is not clobbered. Both sync (`task`) and async (`atask`) invocations are wrapped with this context manager.
+
 ## Class: `SubAgentMiddleware(AgentMiddleware)`
 
 Wraps the LLM call to provide the `task` tool. Does not inject system prompt content; the task tool description conveys the available subagents.
@@ -89,5 +93,6 @@ Both sync (`task`) and async (`atask`) versions are provided.
 - `langchain.agents.middleware.HumanInTheLoopMiddleware`, `InterruptOnConfig`
 - `langchain_core.messages`, `langchain_core.tools`
 - `langgraph.types.Command`
+- `langsmith.run_helpers.get_tracing_context`, `tracing_context` — for `ls_agent_type` tagging
 - `deepagents.backends.protocol` — `BackendFactory`, `BackendProtocol`
 - `deepagents.middleware._utils.append_to_system_message`
