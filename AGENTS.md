@@ -67,19 +67,50 @@ Reserve `per-file-ignores` for **categorical policy** that applies to a whole cl
 timeout = 30  # noqa: PLR2004  # default HTTP timeout, not arbitrary
 ```
 
-#### Commit standards
+#### PR and commit titles
 
-Suggest PR titles that follow Conventional Commits format. Refer to .github/workflows/pr_lint for allowed types and scopes. Note that all commit/PR titles should be in lowercase with the exception of proper nouns/named entities. All PR titles should include a scope with no exceptions. For example:
+Follow Conventional Commits. See `.github/workflows/pr_lint.yml` for allowed types and scopes. All titles must include a scope with no exceptions.
+
+- Start the text after `type(scope):` with a lowercase letter, unless the first word is a proper noun (e.g. `Azure`, `GitHub`, `OpenAI`) or a named entity (class, function, method, parameter, or variable name).
+- Wrap named entities in backticks so they render as code. Proper nouns are left unadorned.
+- Keep titles short and descriptive — save detail for the body.
+
+Examples:
 
 ```txt
 feat(sdk): add new chat completion feature
 fix(cli): resolve type hinting issue
 chore(evals): update infrastructure dependencies
+test(cli): missing unit tests for `_git`
+feat(cli): `--startup-cmd` flag
+style(cli): strip trailing annotations from `ask_user` questions
 ```
 
 See [PR labeling and linting](#pr-labeling-and-linting) for more info.
 
-Describe the "why" of the changes, why the proposed solution is the right one. Limit prose.
+#### PR descriptions
+
+The description *is* the summary — do not add a `# Summary` header.
+
+- When the PR closes an issue, lead with the closing keyword on its own line at the very top, followed by a horizontal rule and then the body:
+
+  ```txt
+  Closes #123
+
+  ---
+
+  <rest of description>
+  ```
+
+  Only `Closes`, `Fixes`, and `Resolves` auto-close the referenced issue on merge. `Related:` or similar labels are informational and do not close anything.
+
+- Explain the *why*: the motivation and why this solution is the right one. Limit prose.
+- Write for readers who may be unfamiliar with this area of the codebase. Avoid insider shorthand and prefer language that is friendly to public viewers — this aids interpretability.
+- Do **not** cite line numbers; they go stale as soon as the file changes.
+- Rarely include full file paths or filenames. Reference the affected symbol, class, or subsystem by name instead.
+- Wrap class, function, method, parameter, and variable names in backticks.
+- Skip dedicated "Test plan" or "Testing" sections in most cases. Mention tests only when coverage is non-obvious, risky, or otherwise notable.
+- Call out areas of the change that require careful review.
 
 ## Core development principles
 
@@ -283,6 +314,33 @@ Model discovery, credential checking, and UI integration are automatic once `PRO
 
 `libs/evals/tests/evals/tau2_airline/data/` contains vendored data from the upstream [tau-bench](https://github.com/sierra-research/tau-bench) project. These files must stay byte-identical to upstream. Pre-commit hooks (`end-of-file-fixer`, `trailing-whitespace`, `fix-smartquotes`, `fix-spaces`) are excluded from this directory in `.pre-commit-config.yaml`. Do not remove those exclusions or reformat files in this directory.
 
+### Benchmarks
+
+Each package's `Makefile` defines `bench` (walltime) and `bench-memory` (heap) targets that are the **single source of truth for the bench invocation** — both local runs and the reusable CI workflow (`.github/workflows/_benchmark.yml`) call these targets. To change how benchmarks are invoked, edit the Makefile; CI inherits the change automatically.
+
+**Run locally:**
+
+```bash
+# Single package (same target CI invokes):
+make -C libs/deepagents bench
+make -C libs/cli bench
+
+# All benched packages in one go:
+make bench-all
+
+# Existing `benchmark` target (no CodSpeed instrumentation, faster, suitable
+# for ad-hoc local tuning with pytest-benchmark):
+make -C libs/deepagents benchmark
+```
+
+The `bench` target adds `--codspeed`; the older `benchmark` target stays around for plain `pytest-benchmark` runs that don't need walltime profiling. `bench-memory` runs the `memory_benchmark`-marked subset and is gated in CI behind `has-memory-benchmarks: true` on the workflow input — currently set by `libs/partners/quickjs`.
+
+**Dashboard:** https://codspeed.io/langchain-ai/deepagents — separate views per package via the upper-left selector. PR comments with performance reports are posted by the CodSpeed GitHub App when it is enabled for the repository (independent of this workflow's configuration).
+
+**Regression thresholds:** currently 10% global, managed in the CodSpeed dashboard. Tighten per-benchmark thresholds for benches whose noise floor is well below 10% (e.g., the `create_deep_agent` construction benches in `libs/deepagents/tests/benchmarks/`) — wide thresholds will mask real regressions in tight code.
+
+**Nightly full sweep:** `.github/workflows/_benchmark_nightly.yml` runs every benched package on a daily cron without path gating, so baselines for unchanged packages don't drift. Use `workflow_dispatch` on that workflow for an ad-hoc full sweep before bumping `pytest-codspeed` or the `CodSpeedHQ/action` SHA.
+
 ## CI/CD infrastructure
 
 ### Release process
@@ -293,9 +351,15 @@ The release pipeline: build → unit tests against built package → publish to 
 
 See `.github/RELEASING.md` for the full workflow (version bumping, pre-releases, troubleshooting failed releases, and label management).
 
+#### Overriding a merged commit's changelog entry
+
+See [Overriding a Merged Commit's Changelog Entry](.github/RELEASING.md#overriding-a-merged-commits-changelog-entry) in `RELEASING.md` for the workflow (when to use it, the block format, and the squash-merge caveats).
+
 ### PR labeling and linting
 
 **Title linting** (`.github/workflows/pr_lint.yml`) – Enforces Conventional Commits format with required scope on PR titles
+
+**Release-please parse check** (`.github/workflows/release_please_parse_check.yml`) – Runs `@conventional-commits/parser` on the would-be squash-merge message (`<title> (#<num>)\n\n<body>`) at PR time. Fails the check and posts a sticky comment with a paste-ready `BEGIN_COMMIT_OVERRIDE` block when the parser would reject the body, preventing silent changelog drops. Mirrors release-please's `preprocessCommitMessage` and `splitMessages` so per-sub-message parse failures are caught the same way release-please catches them. The parser is exact-pinned (not a semver range) and must stay in lock-step with `release-please/package.json`.
 
 **Auto-labeling:**
 

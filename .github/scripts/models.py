@@ -54,6 +54,10 @@ REGISTRY: tuple[Model, ...] = (
         ),
     ),
     Model(
+        "anthropic:claude-haiku-4-5",
+        frozenset({"eval:anthropic", "harbor:anthropic"}),
+    ),
+    Model(
         "anthropic:claude-sonnet-4-5-20250929",
         frozenset({"eval:set0", "eval:anthropic", "harbor:set0", "harbor:anthropic"}),
     ),
@@ -95,6 +99,23 @@ REGISTRY: tuple[Model, ...] = (
             }
         ),
     ),
+    Model(
+        "anthropic:claude-opus-4-7",
+        frozenset(
+            {
+                "eval:set0",
+                "eval:set1",
+                "eval:frontier",
+                "eval:docs",
+                "eval:anthropic",
+                "harbor:set0",
+                "harbor:set1",
+                "harbor:frontier",
+                "harbor:docs",
+                "harbor:anthropic",
+            }
+        ),
+    ),
     # -- Baseten --
     Model(
         "baseten:zai-org/GLM-5",
@@ -127,6 +148,19 @@ REGISTRY: tuple[Model, ...] = (
     Model(
         "baseten:moonshotai/Kimi-K2.5",
         frozenset({"eval:set0", "eval:baseten", "harbor:set0", "harbor:baseten"}),
+    ),
+    Model(
+        "baseten:moonshotai/Kimi-K2.6",
+        frozenset(
+            {
+                "eval:set0",
+                "eval:docs",
+                "eval:baseten",
+                "harbor:set0",
+                "harbor:docs",
+                "harbor:baseten",
+            }
+        ),
     ),
     Model(
         "baseten:nvidia/Nemotron-120B-A12B",
@@ -221,10 +255,12 @@ REGISTRY: tuple[Model, ...] = (
                 "eval:set0",
                 "eval:set1",
                 "eval:frontier",
+                "eval:docs",
                 "eval:google_genai",
                 "harbor:set0",
                 "harbor:set1",
                 "harbor:frontier",
+                "harbor:docs",
                 "harbor:google_genai",
             }
         ),
@@ -422,6 +458,32 @@ REGISTRY: tuple[Model, ...] = (
         ),
     ),
     Model(
+        "openai:gpt-5.5",
+        frozenset(
+            {
+                "eval:set0",
+                "eval:set1",
+                "eval:frontier",
+                "eval:docs",
+                "eval:openai",
+                "harbor:set0",
+                "harbor:set1",
+                "harbor:frontier",
+                "harbor:docs",
+                "harbor:openai",
+            }
+        ),
+    ),
+    Model(
+        "openai:gpt-5.5-pro",
+        frozenset(
+            {
+                "eval:mega",
+                "harbor:mega",
+            }
+        ),
+    ),
+    Model(
         "openai:gpt-5.4-mini",
         frozenset(
             {
@@ -439,6 +501,26 @@ REGISTRY: tuple[Model, ...] = (
         "openrouter:minimax/minimax-m2.7",
         frozenset(
             {
+                "eval:docs",
+                "eval:openrouter",
+                "harbor:docs",
+                "harbor:openrouter",
+            }
+        ),
+    ),
+    Model(
+        "openrouter:moonshotai/kimi-k2.5",
+        frozenset(
+            {
+                "eval:openrouter",
+                "harbor:openrouter",
+            }
+        ),
+    ),
+    Model(
+        "openrouter:moonshotai/kimi-k2.6",
+        frozenset(
+            {
                 "eval:openrouter",
                 "harbor:openrouter",
             }
@@ -449,8 +531,10 @@ REGISTRY: tuple[Model, ...] = (
         frozenset(
             {
                 "eval:open",
+                "eval:docs",
                 "eval:openrouter",
                 "harbor:open",
+                "harbor:docs",
                 "harbor:openrouter",
             }
         ),
@@ -460,6 +544,17 @@ REGISTRY: tuple[Model, ...] = (
         frozenset(
             {
                 "eval:openrouter",
+                "harbor:openrouter",
+            }
+        ),
+    ),
+    Model(
+        "openrouter:deepseek/deepseek-v4-pro",
+        frozenset(
+            {
+                "eval:docs",
+                "eval:openrouter",
+                "harbor:docs",
                 "harbor:openrouter",
             }
         ),
@@ -493,8 +588,10 @@ _PRESET_SECTIONS: list[tuple[str | None, list[tuple[str, str | None]]]] = [
             ("set1", "set1"),
             ("set2", "set2"),
             ("frontier", "frontier"),
+            ("mega", "mega"),
             ("fast", "fast"),
             ("open", "open"),
+            ("docs", "docs"),
         ],
     ),
     (
