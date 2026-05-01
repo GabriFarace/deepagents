@@ -4,7 +4,7 @@
 
 `deepagents` is a Python SDK for building powerful AI agents on top of [LangGraph](https://github.com/langchain-ai/langgraph). It provides a batteries-included agent factory with built-in capabilities for file management, subagent spawning, memory, skills, conversation compaction, and pluggable storage backends.
 
-**Version:** `0.5.0a2`
+**Version:** `0.5.6`
 **License:** MIT
 **Python:** `>=3.11`
 **Homepage:** https://docs.langchain.com/oss/python/deepagents/overview

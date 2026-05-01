@@ -9,7 +9,7 @@ The `pyproject.toml` file defines the `deepagents` Python package metadata, depe
 | Field | Value |
 |---|---|
 | `name` | `deepagents` |
-| `version` | `0.5.0a2` |
+| `version` | `0.5.6` |
 | `description` | General purpose 'deep agent' with sub-agent spawning, todo list capabilities, and mock file system. Built on LangGraph. |
 | `license` | MIT |
 | `requires-python` | `>=3.11,<4.0` |

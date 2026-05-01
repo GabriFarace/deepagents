@@ -57,9 +57,13 @@ This roadmap guides you through the codebase in dependency order: foundational c
 | [__init__.md](libs/deepagents/deepagents/__init__.md) | `libs/deepagents/deepagents/__init__.py` | Public API surface — what users import |
 
 **Key functions:**
-- `resolve_model(model_spec)` — converts string or object to `BaseChatModel`
+- `resolve_model(model_spec)` — converts string or object to `BaseChatModel`; applies registered `ProviderProfile` behaviors automatically
 - `get_model_identifier(model)` — extracts provider:model string from a live model instance
+- `get_model_provider(model)` — extracts the provider name (e.g., `"anthropic"`, `"openai"`)
 - `model_matches_spec(model, spec)` — checks if a model matches a given spec
+- `register_provider_profile(provider, profile)` — extend framework with custom per-provider behaviors
+
+**Key concept:** The **Profiles API** lets you register provider-specific transformations (e.g., enabling OpenAI Responses API, injecting custom HTTP headers) that apply automatically whenever a model from that provider is resolved.
 
 **Dependencies:** None. These are pure utility functions.
 
@@ -143,15 +147,16 @@ The middleware system is the primary extension point. Every feature (file tools,
 | [deepagents/graph.md](libs/deepagents/deepagents/graph.md) | `libs/deepagents/deepagents/graph.py` | `create_deep_agent()` — the full assembly sequence (8 steps) |
 | [pyproject.toml.md](libs/deepagents/pyproject.toml.md) | `libs/deepagents/pyproject.toml` | All SDK dependencies, optional extras, dev tooling |
 
-**The 8-step assembly in `create_deep_agent()`:**
-1. Model resolution (`resolve_model`)
+**The assembly in `create_deep_agent()`:**
+1. Model resolution (`resolve_model` + `apply_provider_profile`)
 2. Backend defaults (`StateBackend`)
-3. `general-purpose` subagent construction
-4. Subagent type separation (sync vs. async)
-5. Per-subagent middleware stacks
-6. Main agent middleware stack assembly
-7. System prompt merging
-8. LangGraph `create_agent()` call + config wrapping
+3. Harness profile lookup (`_harness_profile_for_model`) — per-model prompt/tool/middleware overrides
+4. `general-purpose` subagent construction (auto-added unless already provided or profile disables it)
+5. Subagent type separation (sync vs. async)
+6. Per-subagent middleware stacks
+7. Main agent middleware stack assembly (base → user → tail)
+8. System prompt merging (user prompt → base/profile prompt → profile suffix)
+9. LangGraph `create_agent()` call + config wrapping
 
 **After this stage:** You can read any example agent and understand exactly what it's building.
 
@@ -186,7 +191,7 @@ Read these examples in order of complexity:
 | [partners/modal/sandbox.md](libs/partners/modal/sandbox.md) | `libs/partners/modal/` | `ModalSandbox` — serverless GPU sandbox via Modal |
 | [partners/daytona/sandbox.md](libs/partners/daytona/sandbox.md) | `libs/partners/daytona/` | `DaytonaSandbox` — persistent cloud workspaces |
 | [partners/runloop/sandbox.md](libs/partners/runloop/sandbox.md) | `libs/partners/runloop/` | `RunloopSandbox` — managed sandbox environments |
-| [partners/quickjs/middleware.md](libs/partners/quickjs/middleware.md) | `libs/partners/quickjs/` | `QuickJSMiddleware` — in-process JS execution (unique: not a sandbox, but middleware) |
+| [partners/quickjs/middleware.md](libs/partners/quickjs/middleware.md) | `libs/partners/quickjs/` | `REPLMiddleware` — persistent JS REPL backed by quickjs-rs, with PTC and skill module imports (unique: not a sandbox, but middleware) |
 
 **Key insight:** Modal, Daytona, and Runloop all subclass `BaseSandbox` and only need to implement `execute(cmd)`. QuickJS is different — it's a middleware that provides a JS REPL tool.
 
@@ -275,7 +280,7 @@ This stage is only needed if you plan to work on the UI.
 
 | Read | Source | What you'll learn |
 |---|---|---|
-| [cli/deepagents_cli/mcp_tools.md](libs/cli/deepagents_cli/mcp_tools.md) | `deepagents_cli/mcp_tools.py` | MCP server loading, `MCPServerInfo`, config file validation |
+| [cli/deepagents_cli/mcp_tools.md](libs/cli/deepagents_cli/mcp_tools.md) | `deepagents_cli/mcp_tools.py` | MCP server loading, `MCPServerInfo`, OAuth login (`auth: "oauth"`), per-server `allowedTools`/`disabledTools` filtering |
 | [cli/deepagents_cli/hooks.md](libs/cli/deepagents_cli/hooks.md) | `deepagents_cli/hooks.py` | External hook dispatch (pre/post message, tool execution events) |
 | [cli/deepagents_cli/subagents.md](libs/cli/deepagents_cli/subagents.md) | `deepagents_cli/subagents.py` | AGENTS.md-based subagent loading for the CLI |
 | [cli/deepagents_cli/skills/README.md](libs/cli/deepagents_cli/skills/README.md) | `deepagents_cli/skills/` | Skill discovery and the `/skills` CLI commands |

@@ -1,121 +1,69 @@
-# `langchain_quickjs/_foreign_functions.py`
+# `langchain_quickjs/_ptc.py` (formerly `_foreign_functions.py`)
+
+> **Note:** This file was renamed and restructured in v0.1.0. The old `_foreign_functions.py` bridged Python callables into the `quickjs` (Python) engine. The new `_ptc.py` bridges agent tools into `quickjs-rs` (Rust) contexts with budget enforcement. See also `_repl.py` for context management and `_skills.py` for skill module loading.
 
 ## High-Level Purpose
 
-Bridges Python callables and LangChain tools into QuickJS JavaScript contexts. Handles:
-- Normalizing Python functions and LangChain tools into a common callable form for QuickJS registration.
-- Serializing complex Python return values (lists, dicts) to JSON so QuickJS can receive them as JavaScript objects/arrays.
-- Installing JavaScript shim functions that transparently parse JSON-encoded return values.
-- Routing async callables to a background event loop when called from synchronous QuickJS code.
+Implements **Programmatic Tool Calling (PTC)** — the bridge that makes agent tools callable directly from JavaScript as `tools.<camelCase>(input)` returning a `Promise<string>`.
+
+Key responsibilities:
+- Installing the `tools` object into a `quickjs_rs.Context`
+- Routing JS `tools.*` calls to LangChain tool invocations
+- Enforcing the `max_ptc_calls` budget per `eval` invocation
+- Raising `PTCCallBudgetExceeded` when the budget is exhausted
 
 ## Classes
 
-### `_AsyncLoopThread`
+### `PTCCallBudgetExceeded`
 
-**Purpose:** Maintains a dedicated daemon-thread event loop for bridging async Python callables into synchronous QuickJS execution.
+**Type:** `Exception`
 
-**Attributes:**
-- `_loop`: The background `asyncio.AbstractEventLoop`.
-- `_thread`: The daemon thread running the loop.
+Raised when the number of `tools.*` calls in a single `eval` invocation exceeds `max_ptc_calls`. Surfaces to the agent as an error string from the `eval` tool.
+
+### `PTCBridge`
+
+Manages the PTC installation for a single `quickjs_rs.Context`.
+
+**Constructor:**
+```python
+PTCBridge(
+    context: quickjs_rs.Context,
+    tools: dict[str, BaseTool],
+    *,
+    max_ptc_calls: int | None,
+    runtime: ToolRuntime,
+    prefer_async: bool,
+)
+```
 
 **Methods:**
 
-##### `submit(coroutine: Coroutine) -> Future`
-Schedules a coroutine on the background event loop using `asyncio.run_coroutine_threadsafe()`.
+#### `install() -> None`
+Installs the `tools` object into the context. Each allowed tool becomes accessible as `tools.<camelCase>(input)` returning `Promise<string>`.
 
-## Module-Level Singleton
-
-`_ASYNC_LOOP_THREAD = _AsyncLoopThread()` — Created at import time. Shared across all `QuickJSMiddleware` instances.
+#### `reset_budget() -> None`
+Resets the call counter to zero. Called at the start of each `eval` invocation.
 
 ## Functions
 
-### `get_ptc_implementations(ptc: list | None) -> dict[str, Callable | BaseTool]`
+### `build_ptc_tools(ptc: PTCOption, all_tools: list[BaseTool]) -> dict[str, BaseTool]`
 
-**Purpose:** Normalize the `ptc` list into a name-keyed dict of implementations.
+Resolves `PTCOption` entries to actual `BaseTool` objects from the agent's tool list.
 
-- `BaseTool` instances are keyed by `tool.name`.
-- Plain callables are keyed by `.__name__`.
+- String entries are matched by tool name.
+- `BaseTool` instances are used directly.
+- Unresolved names raise `ValueError`.
 
----
+### `to_camel_case(name: str) -> str`
 
-### `install_external_functions(context: quickjs.Context, implementations, *, execution_mode, runtime) -> None`
+Converts a snake_case tool name to camelCase for the JS `tools.*` API.
 
-**Purpose:** Register all foreign functions and their JavaScript shims in a QuickJS context.
-
-**Parameters:**
-- `context`: The QuickJS context to install into.
-- `implementations`: Name-keyed dict of callables/tools.
-- `execution_mode`: `"sync"` or `"async"` — controls whether tools prefer async invocation.
-- `runtime`: `ToolRuntime` for injected-argument tools.
-
-**Key Logic:**
-1. Builds wrapped callables using `_build_external_functions()`.
-2. Registers each as `__python_<name>` in the context.
-3. Calls `inject_external_function_shims()` to add the JavaScript bridge.
-
----
-
-### `inject_external_function_shims(context: quickjs.Context, external_functions: list[str] | None) -> None`
-
-**Purpose:** Install JavaScript shim functions that parse JSON-encoded return values from Python.
-
-Each shim is a JavaScript arrow function that:
-1. Calls the underlying `__python_<name>` callable.
-2. If the result is a string starting with `[` or `{`, JSON-parses it.
-3. Otherwise returns the value as-is.
-
-This transparently gives JavaScript code native arrays and objects from Python functions that return lists or dicts.
-
----
-
-### `_build_external_functions(implementations, *, prefer_async, runtime) -> dict[str, Callable]`
-
-Converts each implementation to a QuickJS-registerable callable:
-- `BaseTool` → wrapped via `_wrap_tool_for_js()`
-- Plain callable → wrapped via `_wrap_function_for_js()`
-- All registered under the `__python_<name>` key.
-
----
-
-### `_wrap_tool_for_js(tool, *, prefer_async, runtime) -> Callable`
-
-Creates a plain sync callable that: builds the tool payload from positional/keyword args using `_build_tool_payload()`, then invokes the tool via `_invoke_tool()`.
-
----
-
-### `_wrap_function_for_js(implementation: Callable) -> Callable`
-
-Wraps a Python callable to: await coroutines using `_await_if_needed()`, then JSON-encode complex return values using `_serialize_for_js()`.
-
----
-
-### `_invoke_tool(tool, payload, *, prefer_async) -> Any`
-
-Invokes a LangChain tool via its sync or async entrypoint. Resolves awaitables using `_ASYNC_LOOP_THREAD`.
-
----
-
-### `_build_tool_payload(tool, args, kwargs, *, runtime) -> str | dict`
-
-Maps positional/keyword JavaScript call arguments to a LangChain tool input payload, accounting for the tool's input schema field names and injected runtime arguments.
-
----
-
-### `_serialize_for_js(value: Any) -> Any`
-
-Returns primitives unchanged; JSON-encodes everything else as a string.
-
----
-
-### `_await_if_needed(value: Any) -> Any`
-
-If the value is awaitable, submits it to `_ASYNC_LOOP_THREAD` and blocks until done; otherwise returns it directly.
+Example: `"read_file"` → `"readFile"`, `"grep"` → `"grep"`.
 
 ## Important Imports and Dependencies
 
 | Import | Source | Purpose |
 |--------|--------|---------|
-| `quickjs` | `quickjs` | JS context and callable registration |
+| `quickjs_rs` | `quickjs-rs` | JS context and value types |
 | `BaseTool` | `langchain_core.tools` | LangChain tool type |
-| `_is_injected_arg_type`, `get_all_basemodel_annotations` | `langchain_core.tools.base` | Introspecting injected parameters |
-| `asyncio`, `threading`, `json`, `inspect` | stdlib | Async bridge and introspection |
+| `asyncio`, `threading` | stdlib | Async bridge for sync JS context |

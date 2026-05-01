@@ -9,7 +9,7 @@ Single-source-of-truth for the SDK version number. This module is intentionally 
 ### `__version__`
 
 - **Type:** `str`
-- **Current value:** `"0.5.0a2"`
+- **Current value:** `"0.5.6"`
 - **Purpose:** Identifies the installed version of the `deepagents` package. This value is imported by `deepagents/__init__.py` for re-export and also embedded in agent metadata by `graph.py` via the `versions` metadata key.
 
 ## Dependencies

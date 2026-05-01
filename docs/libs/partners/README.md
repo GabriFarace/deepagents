@@ -10,7 +10,7 @@ The `partners` directory contains LangChain partner packages that provide sandbo
 |---------|-----------|-----------|-------------|
 | Daytona | `daytona/` | `langchain-daytona` | Sandbox backend for [Daytona](https://www.daytona.io/) cloud dev environments |
 | Modal | `modal/` | `langchain-modal` | Sandbox backend for [Modal](https://modal.com/) serverless containers (supports GPU) |
-| QuickJS | `quickjs/` | `langchain-quickjs` | JavaScript REPL middleware using the embedded QuickJS engine |
+| QuickJS | `quickjs/` | `langchain-quickjs` | Persistent JavaScript REPL middleware backed by quickjs-rs, with programmatic tool calling (PTC) and skill module imports |
 | Runloop | `runloop/` | `langchain-runloop` | Sandbox backend for [Runloop](https://runloop.ai/) devboxes |
 
 ## Common Architecture
@@ -44,9 +44,12 @@ libs/partners/
 │   └── langchain_modal/sandbox.py      # ModalSandbox
 ├── quickjs/
 │   └── langchain_quickjs/
-│       ├── middleware.py               # QuickJSMiddleware
-│       ├── _foreign_functions.py       # Python-JS bridge
-│       └── _foreign_function_docs.py  # Prompt doc renderer
+│       ├── middleware.py               # REPLMiddleware (persistent JS REPL)
+│       ├── _repl.py                    # Per-thread Context management (quickjs-rs)
+│       ├── _ptc.py                     # Programmatic tool calling bridge + budget
+│       ├── _skills.py                  # Skill module loader (dynamic ES imports)
+│       ├── _prompt.py                  # System prompt builder
+│       └── _format.py                  # Result formatting and truncation
 └── runloop/
     └── langchain_runloop/sandbox.py    # RunloopSandbox
 ```

@@ -6,10 +6,10 @@ This directory contains all independently versioned Python packages that make up
 
 | Package | Version | Description |
 |---|---|---|
-| [`deepagents`](deepagents/README.md) | 0.5.0a2 | Core SDK — agent factory, backends, middleware |
-| [`deepagents-cli`](cli/README.md) | 0.5.0a2 | Interactive TUI and CLI tool |
-| [`deepagents-acp`](acp/README.md) | 0.5.0a2 | Agent Client Protocol (ACP) adapter |
-| [`deepagents-evals`](evals/README.md) | 0.5.0a2 | Evaluation suite and Harbor benchmarks |
+| [`deepagents`](deepagents/README.md) | 0.5.6 | Core SDK — agent factory, backends, middleware |
+| [`deepagents-cli`](cli/README.md) | 0.0.47 | Interactive TUI and CLI tool |
+| [`deepagents-acp`](acp/README.md) | (see package) | Agent Client Protocol (ACP) adapter |
+| [`deepagents-evals`](evals/README.md) | (see package) | Evaluation suite and Harbor benchmarks |
 | Partners | various | Sandbox provider integrations |
 
 ## Package Dependency Graph

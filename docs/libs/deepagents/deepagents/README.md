@@ -9,7 +9,7 @@ The `deepagents` package is the root of the deepagents SDK. It provides everythi
 | Path | Description |
 |---|---|
 | `__init__.py` | Top-level public API: re-exports `create_deep_agent` and key middleware classes |
-| `_version.py` | Single-source version string (`"0.5.0a2"`) |
+| `_version.py` | Single-source version string (`"0.5.6"`) |
 | `_models.py` | Helpers for resolving model strings to `BaseChatModel` instances |
 | `graph.py` | `create_deep_agent()` — the primary entry point for building a configured agent |
 | `backends/` | Pluggable storage and execution backends (state, filesystem, store, sandbox) |

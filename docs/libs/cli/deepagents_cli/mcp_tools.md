@@ -4,12 +4,12 @@
 
 This module provides MCP (Model Context Protocol) tool loading and management for the deepagents CLI. It:
 
-- Loads and validates MCP server configurations from JSON files (Claude Desktop format)
+- Loads and validates MCP server configurations from JSON files
 - Supports automatic discovery of `.mcp.json` files from user-level and project-level locations
 - Connects to MCP servers (stdio, SSE, HTTP transports) and collects tool metadata
-- Provides trust prompting for project-level stdio MCP servers
-
-MCP enables agents to use external tools provided by local processes or remote HTTP/SSE servers.
+- Supports **OAuth login** for remote servers (`auth: "oauth"`)
+- Supports **tool filtering** via `allowedTools` and `disabledTools` per-server config
+- Manages persistent MCP sessions via `MCPSessionManager`
 
 ## Classes
 
@@ -22,7 +22,7 @@ Metadata for a single MCP tool.
 | Attribute | Type | Description |
 |---|---|---|
 | `name` | `str` | Tool name (may include server name prefix) |
-| `description` | `str` | Human-readable description of the tool |
+| `description` | `str` | Human-readable description |
 
 ### `MCPServerInfo`
 
@@ -33,8 +33,18 @@ Metadata for a connected MCP server and its tools.
 | Attribute | Type | Description |
 |---|---|---|
 | `name` | `str` | Server name from the MCP configuration |
-| `transport` | `str` | Transport type (`stdio`, `sse`, or `http`) |
-| `tools` | `list[MCPToolInfo]` | Tools exposed by this server |
+| `transport` | `str` | Transport type (`"stdio"`, `"sse"`, `"http"`, or `"config"` for bad config files) |
+| `tools` | `tuple[MCPToolInfo, ...]` | Tools exposed by this server (empty if `status != "ok"`) |
+| `status` | `MCPServerStatus` | `"ok"`, `"unauthenticated"`, or `"error"` |
+| `error` | `str \| None` | Human-readable reason when status is not `"ok"` |
+
+### `MCPSessionManager`
+
+Lazy, per-server cache of persistent MCP sessions.
+
+- **Discovery** always uses throwaway sessions (no caching for one-shot tool listing).
+- **Runtime tools** bind to a caller-managed `MCPSessionManager` (server mode) or create a local manager, or stay stateless.
+- Callers must call `session_manager.cleanup()` when done.
 
 ## Module-Level Constants
 
@@ -48,41 +58,51 @@ Metadata for a connected MCP server and its tools.
 
 Determines the transport type for a server config. Supports both `type` and `transport` field names, defaulting to `"stdio"`.
 
-**Returns:** Transport type string.
-
 ### `_validate_server_config(server_name: str, server_config: dict) -> None`
 
 Validates a single server's configuration dictionary.
-
-**Raises:**
-- `TypeError`: If config fields have wrong types.
-- `ValueError`: If required fields are missing or transport type is unsupported.
 
 **Validation rules by transport:**
 - `stdio`: Requires `command`. Optional `args` (list) and `env` (dict).
 - `sse`/`http`: Requires `url`. Optional `headers` (dict).
 
+**Raises:** `TypeError` for wrong types; `ValueError` for missing/invalid fields.
+
+### `_validate_tool_filter_fields(server_name: str, server_config: dict) -> None`
+
+Validates `allowedTools` and `disabledTools` fields.
+
+**Rules:**
+- Both fields cannot be set on the same server (`ValueError`).
+- Empty lists are rejected (`ValueError`).
+- Entries are literal tool names or `fnmatch`-style glob patterns (`*`, `?`, `[`).
+- Matched against both the bare tool name and the server-prefixed form (`f"{server_name}_{tool}"`).
+
 ### `load_mcp_config(config_path: str) -> dict`
 
-Loads and validates an MCP configuration from a JSON file (Claude Desktop format).
-
-**Parameters:**
-- `config_path`: Path to the MCP JSON config file.
+Loads and validates an MCP configuration from a JSON file.
 
 **Returns:** Parsed configuration dictionary.
 
-**Raises:**
-- `FileNotFoundError`: If the config file doesn't exist.
-- `json.JSONDecodeError`: If the file contains invalid JSON.
-- `TypeError`/`ValueError`: If the config structure is invalid.
-
-**Supported server config formats:**
+**Supported server config format:**
 ```json
 {
   "mcpServers": {
-    "my-tool": {"command": "python", "args": ["-m", "my_tool"]},
-    "remote-api": {"type": "sse", "url": "https://example.com/mcp"},
-    "rest-api": {"type": "http", "url": "https://api.example.com/mcp", "headers": {"Authorization": "Bearer ..."}
+    "my-tool": {
+      "command": "python",
+      "args": ["-m", "my_tool"],
+      "allowedTools": ["read_file", "grep_*"]
+    },
+    "remote-api": {
+      "type": "sse",
+      "url": "https://example.com/mcp",
+      "auth": "oauth"
+    },
+    "rest-api": {
+      "type": "http",
+      "url": "https://api.example.com/mcp",
+      "headers": {"Authorization": "Bearer ..."},
+      "disabledTools": ["dangerous_tool"]
     }
   }
 }
@@ -90,23 +110,69 @@ Loads and validates an MCP configuration from a JSON file (Claude Desktop format
 
 ### `discover_mcp_configs(project_context: ProjectContext | None = None) -> list[tuple[str, str]]`
 
-Discovers `.mcp.json` config files from standard locations (user-level `~/.deepagents/.mcp.json` and project-level `.deepagents/.mcp.json`).
+Discovers `.mcp.json` config files from standard locations in precedence order (highest to lowest):
 
-**Returns:** List of `(config_path, source)` tuples.
+1. `~/.deepagents/.mcp.json` (user-level)
+2. `<project-root>/.deepagents/.mcp.json` (project subdir)
+3. `<project-root>/.mcp.json` (Claude Code compatibility)
 
-### `resolve_and_load_mcp_tools(*, explicit_config_path, no_mcp, trust_project_mcp, project_context) -> tuple[list[BaseTool], SessionManager, list[MCPServerInfo]]`
+`merge_mcp_configs()` merges multiple dicts; later entries override earlier ones by server name.
+
+**Returns:** List of `(config_path, source)` tuples for files that exist.
+
+### `build_oauth_provider(server_name: str, server_url: str) -> OAuthClientProvider`
+
+Builds an `OAuthClientProvider` for a remote server's OAuth flow.
+
+- Tokens stored on disk at `~/.deepagents/tokens/{server_name}.json` via `FileTokenStorage`.
+- Interactive reauth when refresh fails; displays `"Run: deepagents mcp login {server_name}"`.
+- Only valid for remote transports (`http`, `sse`). Raises `ValueError` for `stdio` servers.
+- Cannot be combined with an explicit `Authorization` header in `headers`.
+
+### `resolve_and_load_mcp_tools(*, explicit_config_path, no_mcp, trust_project_mcp, project_context) -> tuple[list[BaseTool], MCPSessionManager, list[MCPServerInfo]]`
 
 The main async entry point for loading all MCP tools. Discovers configs, prompts for project-stdio trust if needed, connects to all servers, and returns the tools with session management.
 
-**Returns:** `(tools, session_manager, server_info_list)`.
+**Returns:** `(tools, session_manager, server_info_list)`
 
-The `session_manager` must be kept alive as long as the MCP tools are in use. Call `session_manager.cleanup()` when done.
+Servers with status `"unauthenticated"` are skipped (not loaded as tools). Servers with status `"error"` are also skipped but logged.
+
+## OAuth Login Flow
+
+```
+# User runs:
+deepagents mcp login <server_name>
+
+# Or the CLI prompts automatically when:
+# - Server config has auth: "oauth"
+# - Token is expired or missing
+```
+
+OAuth tokens are cached on disk and refreshed automatically on subsequent runs. If refresh fails, the server is reported as `"unauthenticated"` in `MCPServerInfo`.
+
+## Tool Filtering
+
+`allowedTools` and `disabledTools` support glob patterns:
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "my-server",
+      "allowedTools": ["read_*", "list_files"]
+    }
+  }
+}
+```
+
+Patterns are matched against both the bare tool name (e.g., `"read_file"`) and the server-prefixed name (e.g., `"my_server_read_file"`).
 
 ## Important Imports and Dependencies
 
 | Import | Source | Purpose |
 |---|---|---|
-| `langchain_mcp_adapters.client.MultiServerMCPClient` | `langchain-mcp-adapters` | MCP client implementation |
+| `langchain_mcp_adapters` | `langchain-mcp-adapters` | MCP client implementation |
 | `contextlib.AsyncExitStack` | stdlib | Manages async MCP sessions |
 | `json`, `pathlib.Path` | stdlib | Config loading |
+| `fnmatch` | stdlib | Glob pattern matching for tool filters |
 | `ProjectContext` | `deepagents_cli.project_utils` | Project root and context |

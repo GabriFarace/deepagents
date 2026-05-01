@@ -1,65 +1,41 @@
-# `langchain_quickjs/_foreign_function_docs.py`
+# `langchain_quickjs/_prompt.py` (formerly `_foreign_function_docs.py`)
+
+> **Note:** This file was renamed and restructured in v0.1.0. The old `_foreign_function_docs.py` generated TypeScript-like stubs for Python foreign functions. The new `_prompt.py` builds the full REPL system prompt, including optional PTC docs and skill module listings.
 
 ## High-Level Purpose
 
-Renders compact prompt documentation for QuickJS foreign functions. Converts Python function signatures, type annotations, and docstrings into TypeScript-like stubs and JSDoc blocks that the LLM can use to understand how to call foreign functions from within the JavaScript REPL.
+Builds the system prompt fragment injected by `REPLMiddleware.modify_request()`. Combines:
+- Base REPL usage instructions
+- Optional PTC tool documentation (TypeScript-like signatures)
+- Optional skill module listing (when `skills_backend` is set)
 
-## Public API
+## Functions
 
-### `render_external_functions_section(implementations: dict, *, add_docs: bool) -> str`
+### `build_repl_system_prompt(*, ptc_tools, skill_names, add_ptc_docs) -> str`
 
-**Purpose:** Build the optional system prompt section describing available foreign functions.
+Builds the complete system prompt fragment for the REPL tool.
 
 **Parameters:**
-- `implementations`: Name-keyed dict of callables or `BaseTool` objects.
-- `add_docs`: If `False`, returns a simple bullet list of function names. If `True`, includes full TypeScript-like signatures and JSDoc comments.
+- `ptc_tools` — Dict of tool name → `BaseTool` for PTC-enabled tools (empty dict if PTC disabled).
+- `skill_names` — List of skill names importable as `@/skills/<name>` (empty list if no skills backend).
+- `add_ptc_docs` — If `True`, includes TypeScript-like signatures and descriptions for each PTC tool.
 
-**Return Value:** Empty string if no implementations. Otherwise a formatted section starting with `"\n\nAvailable foreign functions:\n..."`.
+**Returns:** Formatted string to append to the agent's system message.
 
----
+### `render_ptc_tool_docs(tools: dict[str, BaseTool]) -> str`
 
-### `render_foreign_function_section(implementations: dict) -> str`
+Generates TypeScript-style function signatures and docstrings for each PTC tool. Used when `add_ptc_docs=True` to help the model understand the `tools.*` API.
 
-**Purpose:** Render the full prompt section with TypeScript-style signatures and referenced types.
-
-**Return Value:** A markdown code block containing all function stubs, plus a "Referenced types" block if any return types are structured TypedDicts.
-
----
-
-### `format_foreign_function_docs(name: str, implementation) -> str`
-
-**Purpose:** Render a single function stub (signature + JSDoc) for one foreign function.
-
----
-
-## Internal Type Annotation Rendering
-
-The module contains a hierarchy of annotation renderers:
-
-### `_format_annotation(annotation: Any) -> str`
-Dispatches to specialized formatters based on the annotation type:
-- Primitives (`str`, `bool`, `int`, `float`, `None`, `Any`) → TypeScript equivalents
-- Collections (`list`, `set`, `tuple`) → `T[]` or tuple syntax
-- `dict` → `Record<K, V>`
-- `Union` / `UnionType` → `A | B`
-- Unknown → `str(annotation)` with cleanup
-
-### `_render_function_stub(name, implementation) -> str`
-Produces a TypeScript-like function declaration, optionally prefixed with a JSDoc block derived from the Python docstring. Handles both `async function` and `function` prefixes based on whether the implementation is a coroutine.
-
-### `_render_typed_dict_definition(annotation) -> str`
-Renders a TypedDict as a TypeScript `type Foo = { field: T }` block.
-
-### `_collect_referenced_types(implementations) -> list[type]`
-Identifies TypedDict-like return types from foreign function signatures, collecting unique types for the "Referenced types" section.
-
-### `_render_jsdoc(doc: str) -> str`
-Converts a Google-style Python docstring into a JSDoc `/** ... */` block, extracting the summary lines and `@param` entries from the `Args:` section.
+**Example output:**
+```typescript
+// Available as: tools.readFile(path: string): Promise<string>
+// Reads a file from the backend.
+tools.readFile: (path: string) => Promise<string>
+```
 
 ## Important Imports and Dependencies
 
 | Import | Source | Purpose |
 |--------|--------|---------|
-| `inspect` | stdlib | Signature and docstring introspection |
-| `typing` | stdlib | `get_type_hints`, `get_origin`, `get_args` |
-| `BaseTool` | `langchain_core.tools` | LangChain tool type |
+| `BaseTool` | `langchain_core.tools` | Tool type inspection |
+| `inspect` | stdlib | Signature introspection |

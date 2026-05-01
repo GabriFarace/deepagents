@@ -8,7 +8,7 @@ This module contains version information and lightweight URL constants for `deep
 
 | Constant | Value | Description |
 |---|---|---|
-| `__version__` | `"0.0.34"` | The current CLI package version (managed by release-please) |
+| `__version__` | `"0.0.47"` | The current CLI package version (managed by release-please) |
 | `DOCS_URL` | `"https://docs.langchain.com/oss/python/deepagents/cli"` | URL for CLI documentation |
 | `PYPI_URL` | `"https://pypi.org/pypi/deepagents-cli/json"` | PyPI JSON API endpoint for version checks |
 | `CHANGELOG_URL` | `"https://github.com/langchain-ai/deepagents/blob/main/libs/cli/CHANGELOG.md"` | Full changelog URL |

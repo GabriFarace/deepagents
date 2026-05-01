@@ -17,7 +17,7 @@ build-backend = "hatchling.build"
 | Field | Value |
 |---|---|
 | Name | `deepagents-cli` |
-| Current version | `0.0.34` |
+| Current version | `0.0.47` |
 | Python requirement | `>=3.11, <4.0` |
 | License | MIT |
 | Status | Beta (Development Status 4) |
@@ -28,7 +28,7 @@ build-backend = "hatchling.build"
 
 | Package | Version Range | Purpose |
 |---|---|---|
-| `deepagents` | `==0.4.11` | Core agent SDK |
+| `deepagents` | `==0.5.6` | Core agent SDK |
 | `langchain` | `>=1.2.13,<2.0.0` | LangChain framework |
 | `langgraph` | `>=1.1.2,<2.0.0` | Agent graph execution |
 | `langgraph-checkpoint-sqlite` | `>=3.0.0,<4.0.0` | SQLite checkpointing |
