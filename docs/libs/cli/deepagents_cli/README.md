@@ -1,107 +1,109 @@
-# `deepagents_cli/` — CLI Package
+# deepagents-cli — Architecture Overview
 
-This is the main Python package for `deepagents-cli`. It provides a full-featured interactive terminal interface (TUI) for the Deep Agents AI coding assistant, built on LangGraph and Textual.
+`deepagents-cli` is the interactive user-facing layer of deepagents. It provides a Textual TUI (terminal user interface), manages a LangGraph server subprocess, and communicates with it over HTTP + SSE. The CLI does **not** embed the agent graph directly — it always talks to the agent through the LangGraph server API.
 
-## Architecture Overview
+---
+
+## High-Level Architecture
 
 ```
-deepagents_cli/
-├── Entry Points
-│   ├── __main__.py          # python -m deepagents_cli
-│   └── main.py              # cli_main() — parse args, route, launch TUI
-│
-├── TUI Application
-│   ├── app.py               # DeepAgentsApp (Textual App subclass)
-│   ├── theme.py             # Brand colors, ThemeEntry registry
-│   └── widgets/             # All Textual UI widget components
-│
-├── Agent & Model
-│   ├── agent.py             # Agent creation with middleware stack
-│   ├── model_config.py      # ModelSpec, provider discovery, profile loading
-│   └── configurable_model.py # ConfigurableModelMiddleware for runtime switching
-│
-├── Session & State
-│   ├── sessions.py          # Thread persistence via SQLite checkpoints
-│   ├── config.py            # Settings, lazy bootstrap, dotenv loading
-│   └── _session_stats.py    # Token tracking dataclasses
-│
-├── Server Infrastructure
-│   ├── server.py            # langgraph dev subprocess lifecycle
-│   ├── server_graph.py      # Server-side graph definition
-│   ├── server_manager.py    # Server start/restart management
-│   ├── _server_config.py    # DA_SERVER_* env var protocol
-│   └── _server_constants.py # Shared constants
-│
-├── Tools & Integrations
-│   ├── mcp_tools.py         # MCP server loading and tool discovery
-│   ├── mcp_trust.py         # Project MCP trust prompting
-│   ├── hooks.py             # External hook dispatch
-│   └── integrations/        # Sandbox provider abstractions
-│
-├── Skills & Subagents
-│   ├── skills/              # Skill management commands and loading
-│   ├── subagents.py         # Subagent loader from AGENTS.md files
-│   └── built_in_skills/     # Skills shipped with the package
-│
-├── Input & Output
-│   ├── editor.py            # External editor integration
-│   ├── file_ops.py          # File diff computation for HITL previews
-│   ├── output.py            # JSON output helpers
-│   ├── input.py             # Media input parsing and placeholders
-│   └── clipboard.py         # Clipboard integration
-│
-├── Security & Utilities
-│   ├── unicode_security.py  # Dangerous Unicode detection
-│   ├── update_check.py      # PyPI update checking
-│   ├── project_utils.py     # Git root and project context detection
-│   ├── local_context.py     # LocalContextMiddleware
-│   └── media_utils.py       # Image/video processing utilities
-│
-└── Private Modules (prefixed with _)
-    ├── _version.py          # Version constants
-    ├── _cli_context.py      # CLIContext TypedDict
-    ├── _session_stats.py    # SessionStats, ModelStats
-    ├── _server_config.py    # ServerConfig dataclass
-    ├── _server_constants.py # DA_SERVER_ prefix constant
-    ├── _ask_user_types.py   # AskUser type definitions
-    ├── _debug.py            # Debug utilities
-    └── _testing_models.py   # Test-only model helpers
+User
+  │  keyboard / stdin
+  ▼
+┌─────────────────────────────────────────────────┐
+│  Textual TUI  (app.py)                          │
+│  ┌─────────┐  ┌──────────────┐  ┌────────────┐ │
+│  │StatusBar│  │VerticalScroll│  │ ChatInput  │ │
+│  └─────────┘  │  (messages)  │  └────────────┘ │
+│               └──────────────┘                  │
+│         ┌──────────────────────────┐            │
+│         │ Modal overlays           │            │
+│         │ ApprovalMenu, ModelSel…  │            │
+│         └──────────────────────────┘            │
+└──────────────────┬──────────────────────────────┘
+                   │ HTTP + SSE  (RemoteAgent)
+                   ▼
+┌─────────────────────────────────────────────────┐
+│  LangGraph Server Subprocess                    │
+│  (langgraph dev — spawned by ServerProcess)     │
+│                                                 │
+│  server_graph.py::make_graph()                  │
+│   └─ create_cli_agent()  (agent.py)             │
+│       └─ create_deep_agent()  (SDK)             │
+│           └─ middleware stack + tools           │
+└─────────────────────────────────────────────────┘
+         │ SQLite checkpoint
+         ▼
+~/.deepagents/.state/threads.db
 ```
 
-## Key Concepts
+This split is intentional: it gives the CLI persistence (via LangGraph checkpointing), hot-reload capability, and the ability to run remote or async subagents without coupling to any specific process.
 
-### Startup Sequence
+---
 
-1. `cli_main()` in `main.py` checks dependencies and parses args.
-2. Model is resolved (from `--model`, config default, or environment detection).
-3. In **server mode** (default): a `langgraph dev` subprocess is started via `server.py`. The Textual app connects to it via `remote_client.py`.
-4. In **direct mode**: The agent is built inline via `agent.py` and run in-process.
-5. `DeepAgentsApp` (from `app.py`) launches the Textual TUI.
+## File Map
 
-### Input Modes
-
-The chat input supports three modes, selected by the first character:
-- **Normal** (`no prefix`) — message sent to the AI agent
-- **Shell** (`!`) — command run in the local shell
-- **Command** (`/`) — slash command (e.g., `/model`, `/threads`, `/new`)
-
-### Human-in-the-Loop (HITL)
-
-Tool calls that modify files, run shell commands, or access the web require approval. The `ApprovalMenu` widget (in `widgets/approval.py`) presents the tool details and captures a `yes/auto/no` decision.
-
-### Thread Persistence
-
-Conversations are persisted as LangGraph checkpoints in `~/.deepagents/checkpoints.db` (SQLite). Each conversation has a UUID7 thread ID. The `/threads` command and `-r` flag manage thread resumption.
-
-### MCP Integration
-
-MCP (Model Context Protocol) servers extend the agent with external tools. Configs are discovered from `~/.deepagents/.mcp.json` and `.deepagents/.mcp.json`. The `/mcp` command shows loaded servers and tools.
-
-## Subpackages
-
-| Package | Description |
+| File | Role |
 |---|---|
-| [`widgets/`](widgets/README.md) | All Textual UI widget components |
-| [`skills/`](skills/README.md) | Skill management CLI commands and discovery |
-| [`integrations/`](integrations/README.md) | Sandbox provider abstractions |
-| [`built_in_skills/`](built_in_skills/README.md) | Skills shipped with the package |
+| [`main.py`](main.md) | CLI entry point — argument parsing, mode dispatch |
+| [`app.py`](app.md) | Textual `CLIApp` — widget hierarchy, message queue, input routing |
+| [`agent.py`](agent.md) | `create_cli_agent()` — builds the agent graph for the CLI's server |
+| [`server.py`](server.md) | `ServerProcess` — manages the `langgraph dev` subprocess |
+| [`server_manager.py`](server_manager.md) | `start_server_and_get_agent()` — orchestrates startup sequence |
+| [`server_graph.py`](server_graph.md) | `make_graph()` — wires up the agent inside the server process |
+| [`remote_client.py`](remote_client.md) | `RemoteAgent` — HTTP+SSE client for the LangGraph server |
+| [`sessions.py`](sessions.md) | Thread metadata — listing, resuming, creating |
+| [`mcp_tools.py`](mcp_tools.md) | MCP server config loading, tool discovery |
+| [`command_registry.py`](command_registry.md) | Slash command definitions and bypass tiers |
+| [`hooks.py`](hooks.md) | Lifecycle hook dispatch (session.start, message.agent, …) |
+| [`config.py`](config.md) | Settings singleton, dotenv loading, bootstrap |
+| [`non_interactive.py`](non_interactive.md) | Headless `-n` mode |
+| [`subagents.py`](subagents.md) | Loads subagent specs from `~/.deepagents/{agent}/agents/` |
+| [`tools.py`](tools.md) | `web_search` and `fetch_url` tool definitions |
+| [`input.py`](input.md) | `@file` mention parsing, media tracking |
+| [`widgets/`](widgets/README.md) | All Textual widget classes |
+
+---
+
+## Key Design Decisions
+
+**Why a subprocess?** Running `langgraph dev` as a subprocess isolates the agent graph from the TUI process. This enables: LangGraph's built-in SQLite checkpointing, hot-reload of graph code without restarting the TUI, and future remote-server support with no TUI changes.
+
+**Why SSE streaming?** Server-Sent Events give real-time token-by-token streaming without WebSockets. Each state update from LangGraph is forwarded to the TUI as it arrives.
+
+**Why a message queue?** The TUI processes user input asynchronously. A `deque[QueuedMessage]` ensures messages and commands execute in order and don't race with each other or with ongoing agent execution.
+
+---
+
+## Startup Sequence (summary)
+
+1. `main.py::cli_main()` parses args and calls `run_textual_cli_async()`
+2. `run_textual_cli_async()` creates a `CLIApp` and calls `app.run_async()`
+3. `CLIApp.on_mount()` calls `start_server_and_get_agent()` (server_manager.py)
+4. `start_server_and_get_agent()` scaffolds a temp workspace and starts `langgraph dev`
+5. When the server is ready, a `RemoteAgent` client is created and returned to the TUI
+6. The TUI enters its idle loop; user input is routed through `ChatInput` → `_handle_submit()`
+
+Full detail: [main.md](main.md) → [server_manager.md](server_manager.md) → [app.md](app.md)
+
+---
+
+## Message Flow (summary)
+
+1. User types in `ChatInput` and presses Enter
+2. `app.py` enqueues the message; pops it when agent is idle
+3. `RemoteAgent.astream()` sends the message to the LangGraph server via HTTP POST + SSE
+4. Server streams state updates (AI tokens, tool calls, interrupts) back as SSE chunks
+5. `StreamHandler` in `remote_client.py` translates chunks into widget mutations
+6. `CLIApp` applies widget updates: appends text, creates `ToolCallMessage`, shows `ApprovalMenu`
+
+Full detail: [app.md](app.md) → [remote_client.md](remote_client.md)
+
+---
+
+## See Also
+
+- [CLI entry point: main.md](main.md)
+- [TUI App: app.md](app.md)
+- [Widgets: widgets/README.md](widgets/README.md)
+- [SDK entry point: ../../deepagents/deepagents/graph.md](../../deepagents/deepagents/graph.md)

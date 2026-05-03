@@ -1,97 +1,49 @@
-# `widgets/message_store.py`
+# `deepagents_cli/widgets/message_store.py`
 
 ## High-Level Purpose
 
-This module provides the `MessageStore` class and associated data structures for **virtualized chat history**. Rather than keeping all message widgets in the DOM (which would slow down Textual for long conversations), the store holds all message data as lightweight `MessageData` dataclasses and only renders a sliding window of widgets in the DOM.
+`MessageStore` is an in-memory registry of all message widgets currently displayed in the transcript. It lets `CLIApp` and `StreamHandler` look up a specific `ToolCallMessage` by ID to update it when its result arrives, without scanning the entire Textual widget tree.
 
-The design is inspired by Textual's `Log` widget, which keeps only `N` lines in the DOM.
+---
 
-## Classes
-
-### `MessageType`
-
-**Type:** `StrEnum`
-
-Types of messages in the chat.
-
-| Value | Description |
-|---|---|
-| `USER` | User input message |
-| `ASSISTANT` | AI assistant response |
-| `TOOL` | Tool call and result |
-| `SKILL` | Skill invocation |
-| `ERROR` | Error message |
-| `APP` | App-level informational message |
-| `SUMMARIZATION` | Conversation summarization event |
-| `DIFF` | File diff display |
-
-### `ToolStatus`
-
-**Type:** `StrEnum`
-
-Status of a tool call.
-
-| Value | Description |
-|---|---|
-| `PENDING` | Tool call queued but not started |
-| `RUNNING` | Tool call in progress |
-| `SUCCESS` | Tool call completed successfully |
-| `ERROR` | Tool call failed |
-| `REJECTED` | Tool call rejected by user |
-| `SKIPPED` | Tool call skipped |
-
-### `MessageData`
-
-**Type:** `dataclass`
-
-In-memory message data for virtualization. Designed to be lightweight so thousands of messages can be stored without significant memory overhead.
-
-| Attribute | Type | Description |
-|---|---|---|
-| `type` | `MessageType` | Kind of message |
-| `content` | `str` | Primary text content |
-| `id` | `str` | Unique identifier matching the DOM widget ID |
-| `timestamp` | `float` | Unix epoch creation timestamp |
-| `tool_name` | `str \| None` | Tool name (TOOL messages only) |
-| `tool_args` | `dict \| None` | Tool arguments (TOOL messages only) |
-| `tool_status` | `ToolStatus \| None` | Execution status (TOOL messages only) |
-| `tool_output` | `str \| None` | Tool output text |
-| `tool_expanded` | `bool` | Whether tool output is expanded |
-| `skill_expanded` | `bool` | Whether skill output is expanded |
-| `is_streaming` | `bool` | Whether this message is being streamed |
-| `height_hint` | `int \| None` | Cached height hint for layout |
-| `mode` | `str \| None` | Input mode (`'shell'`, `'command'`) |
-
-**Updatable fields** (via `update_message()`): `content`, `tool_status`, `tool_output`, `tool_expanded`, `skill_expanded`, `is_streaming`, `height_hint`.
+## Key Class
 
 ### `MessageStore`
 
-Manages the in-memory message list and DOM widget lifecycle.
+**Key methods:**
 
-**Key Methods:**
+#### `register(widget) → None`
 
-#### `add_message(data: MessageData) -> None`
-Appends a new message to the store.
+Registers a message widget. The widget must have a `message_id` attribute. Used for `ToolCallMessage` and `AssistantMessage` widgets that need to be updated in place.
 
-#### `update_message(message_id: str, **kwargs) -> MessageData | None`
-Updates fields on an existing message. Only fields in `_UPDATABLE_FIELDS` can be updated.
+#### `get(message_id) → MessageWidget | None`
 
-**Returns:** Updated `MessageData`, or `None` if not found.
+Returns the widget with the given `message_id`, or `None` if not found.
 
-#### `get_message(message_id: str) -> MessageData | None`
-Retrieves a message by ID.
+#### `update_tool_call(tool_call_id, result, status) → None`
 
-#### `all_messages() -> list[MessageData]`
-Returns all messages in order.
+Convenience method: looks up the `ToolCallMessage` with the matching `tool_call_id`, then sets its result text and status. Called by `StreamHandler` when a `ToolMessage` arrives.
 
-#### `clear() -> None`
-Clears all messages from the store.
+#### `get_assistant_message(message_id) → AssistantMessage | None`
 
-## Important Imports and Dependencies
+Returns the `AssistantMessage` widget for the current streaming response. Used to append tokens.
 
-| Import | Source | Purpose |
-|---|---|---|
-| `uuid` | stdlib | Message ID generation |
-| `time` | stdlib | Timestamp generation |
-| `enum.StrEnum` | stdlib | Enum types |
-| `textual.widget.Widget` | textual | Widget type hint |
+#### `clear() → None`
+
+Called on `/clear` to reset the store for a new thread.
+
+---
+
+## Architecture Notes
+
+**Why not use Textual's `query()`?** Textual's DOM query (`app.query(ToolCallMessage)`) scans the widget tree. For a long conversation with many tool calls, this would be O(n) on every token append. `MessageStore` provides O(1) lookups.
+
+**Lifecycle:** The store is created once in `CLIApp.__init__` and cleared on `/clear`. Widget registrations happen in `CLIApp` immediately after `mount()`.
+
+---
+
+## See Also
+
+- [messages.md](messages.md) — the widget classes registered here
+- [remote_client.md](../remote_client.md) — `StreamHandler.update_tool_call()` calls `MessageStore`
+- [app.md](../app.md) — owns the `MessageStore` instance

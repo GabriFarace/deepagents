@@ -2,74 +2,88 @@
 
 ## High-Level Purpose
 
-`MemoryMiddleware` implements support for the [AGENTS.md specification](https://agents.md/). It loads memory/context files from configurable backend paths and injects their content into the system prompt on every LLM call. Unlike skills (on-demand workflows), memory is always loaded and provides persistent context for the agent.
+`MemoryMiddleware` loads `AGENTS.md` files — per-project or per-agent instruction files — and injects their contents into the agent's system prompt. It is the mechanism by which agents "remember" project conventions, team preferences, and accumulated knowledge across sessions.
 
-## Key Concepts
+---
 
-- **Memory sources** — Simple file paths to `AGENTS.md`-style Markdown files. Multiple sources are loaded in order and concatenated.
-- **Lazy loading** — Memory is loaded once per conversation (in `before_agent`) and cached in `MemoryState`. Subsequent turns skip the load.
-- **System prompt injection** — Formatted memory is appended to the system message on every `wrap_model_call`. The agent is instructed to update memories when it learns new preferences.
+## Key Class
 
-## TypedDicts and State
+### `MemoryMiddleware(AgentMiddleware)`
 
-### `MemoryState(AgentState)`
-State schema for `MemoryMiddleware`.
-- `memory_contents: NotRequired[Annotated[dict[str, str], PrivateStateAttr]]` — Dict mapping source paths to their loaded content. Marked as `PrivateStateAttr` so it is not included in the output passed to parent agents.
+**Constructor parameters:**
 
-### `MemoryStateUpdate`
-State update shape: `{"memory_contents": dict[str, str]}`.
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `memory_paths` | `list[str]` | required | Absolute paths to AGENTS.md files |
+| `backend` | `BackendProtocol` | required | Backend used to read memory files |
+| `add_cache_control` | `bool` | `False` | Add Anthropic ephemeral cache control to memory block |
 
-## `MEMORY_SYSTEM_PROMPT`
+---
 
-A large prompt template injected into the system message. Key content:
-- Wraps memory in `<agent_memory>` XML tags.
-- Provides `<memory_guidelines>` with detailed instructions on when and how to update memories.
-- Specifically teaches the agent to update memory as its FIRST action when relevant.
-- Lists examples of what to remember (preferences, credentials) vs. what NOT to remember (transient info, API keys).
+## AGENTS.md Format
 
-## Class: `MemoryMiddleware(AgentMiddleware[MemoryState, ContextT, ResponseT])`
+`AGENTS.md` is plain Markdown. There is no required structure. Common sections include:
 
-### Constructor
+- Project overview and purpose
+- Build and test commands
+- Code style conventions
+- Known gotchas and constraints
+- Architecture decisions
 
+The agent is instructed to:
+- Consult memory before starting tasks
+- Update memory when it learns something that should persist
+- Use `edit_file` to update `AGENTS.md` when the user asks it to remember something
+
+---
+
+## System Prompt Injection
+
+Memory is injected as an XML block:
+
+```xml
+<agent_memory>
+  # My Project
+
+  ## Build Commands
+  - `uv run pytest` — run tests
+  - `uv run ruff check .` — lint
+  
+  ...
+</agent_memory>
+```
+
+The system prompt also includes explicit guidelines about when and how to update memory:
+- Save knowledge that persists across sessions (conventions, decisions)
+- Don't save transient information (current task, temporary state)
+- Never save credentials or API keys
+
+---
+
+## Cache Control
+
+When `add_cache_control=True`, the memory block gets Anthropic's `cache_control: {type: "ephemeral"}` mark. This caches the memory block across API calls within a 5-minute window, reducing latency and cost for long sessions.
+
+---
+
+## Multiple Memory Sources
+
+`memory_paths` can contain multiple paths:
 ```python
 MemoryMiddleware(
-    *,
-    backend: BACKEND_TYPES,
-    sources: list[str],
-    add_cache_control: bool = False,
+    memory_paths=[
+        "/home/user/.deepagents/AGENTS.md",    # user-level
+        "/project/.deepagents/AGENTS.md",      # project-level
+    ],
+    backend=backend,
 )
 ```
 
-**Parameters:**
-- `backend` — Backend instance or factory function.
-- `sources` — List of file paths to load (e.g., `["~/.deepagents/AGENTS.md", "./.deepagents/AGENTS.md"]`). Display names are derived from paths. Sources are loaded in order and concatenated.
-- `add_cache_control` — When `True`, tags the last system-message content block with `cache_control: {"type": "ephemeral"}` when the active model is `ChatAnthropic`. This creates a **second prompt-cache breakpoint** that pairs with `AnthropicPromptCachingMiddleware`'s breakpoint on the static system prompt, keeping the memory block boundary cached across turns (without this, memory content falls outside the cache boundary and gets re-written every turn, reducing cache hit rate from ~99.8% to ~60% on turn 2). No-ops on non-Anthropic models; Bedrock and Vertex wrappers do not qualify. The check is done at runtime via `request.model` so it correctly follows middleware-level model overrides.
+Files are injected in order; later files' contents appear below earlier ones.
 
-### Methods
+---
 
-#### `before_agent(state, runtime, config) -> MemoryStateUpdate | None`
-Synchronous pre-agent hook. Loads all memory sources via `backend.download_files()`. Skips loading if `memory_contents` is already in state (prevents redundant loads on subsequent turns). Returns `None` if already loaded, otherwise returns `MemoryStateUpdate`.
+## See Also
 
-#### `abefore_agent(state, runtime, config) -> MemoryStateUpdate | None`
-Async version. Uses `backend.adownload_files()`.
-
-#### `modify_request(request) -> ModelRequest`
-Formats loaded memory contents via `_format_agent_memory` and appends to the system message using `append_to_system_message`.
-
-#### `wrap_model_call(request, handler) -> ModelResponse`
-Calls `modify_request` then forwards to `handler`.
-
-#### `awrap_model_call(request, handler) -> ModelResponse`
-Async version.
-
-#### `_get_backend(state, runtime, config) -> BackendProtocol`
-Resolves the backend: if `self._backend` is callable (factory), constructs a `ToolRuntime` and calls it; otherwise returns the backend directly.
-
-#### `_format_agent_memory(contents: dict[str, str]) -> str`
-Formats memory with section separators. If no content loaded, returns `"(No memory loaded)"`. Otherwise, combines path + content pairs for each source and formats via `MEMORY_SYSTEM_PROMPT`.
-
-## Dependencies
-
-- `langchain.agents.middleware.types` — `AgentMiddleware`, `AgentState`, `PrivateStateAttr`
-- `deepagents.backends.protocol` — `BACKEND_TYPES`, `BackendProtocol`
-- `deepagents.middleware._utils.append_to_system_message`
+- [README.md](README.md) — middleware stack overview
+- [../graph.md](../graph.md) — `memory_paths` parameter

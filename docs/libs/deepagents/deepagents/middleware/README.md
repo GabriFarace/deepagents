@@ -1,74 +1,92 @@
-# `deepagents/middleware/` — Agent Middleware
+# `deepagents/middleware/` — Middleware Stack
 
-## Overview
+Middleware is the mechanism by which tools, system prompt sections, and safety gates are added to the agent. Every `AgentMiddleware` subclass wraps each model call by implementing `wrap_model_call()`. The agent runs through the middleware stack on every LLM invocation.
 
-The `middleware` package provides the behavior-level components that augment the agent with capabilities beyond bare LLM tool calling. Each middleware subclasses `AgentMiddleware` and gets to intercept every LLM request via `wrap_model_call()` before it is sent, and optionally run logic before each agent step via `before_agent()`.
+---
 
-## File Descriptions
+## Default Stack (in execution order)
 
-| File | Class | Purpose |
+```
+1.  TodoListMiddleware          — checklist-based task planning
+2.  SkillsMiddleware            — skill catalog injection
+3.  FilesystemMiddleware        — file/shell tools (required; always present)
+4.  SubAgentMiddleware          — "task" delegation tool
+5.  SummarizationMiddleware     — context window compaction
+6.  PatchToolCallsMiddleware    — dangling tool call repair
+7.  AsyncSubAgentMiddleware     — remote background tasks
+8.  [user middleware]           — inserted here via create_deep_agent(middleware=[...])
+9.  [profile extra_middleware]  — harness profile additions
+10. _ToolExclusionMiddleware    — removes excluded tools
+11. AnthropicPromptCachingMiddleware — cache_control marks
+12. MemoryMiddleware            — AGENTS.md injection
+13. HumanInTheLoopMiddleware    — interrupt gates
+```
+
+The stack is applied in reverse order (item 13 wraps item 12, which wraps item 11, …). Item 1 (TodoListMiddleware) is the innermost wrapper — it runs last before the model call.
+
+---
+
+## Middleware Inventory
+
+| File | Middleware | Role |
 |---|---|---|
-| `__init__.py` | — | Re-exports all public middleware; explains middleware vs. plain tools |
-| `_utils.py` | — | `append_to_system_message` helper for all middleware |
-| `filesystem.py` | `FilesystemMiddleware` | Provides ls/read/write/edit/glob/grep/execute tools; handles large result eviction |
-| `memory.py` | `MemoryMiddleware` | Loads AGENTS.md files and injects into system prompt; teaches agent to update memories |
-| `skills.py` | `SkillsMiddleware` | Loads skill metadata from SKILL.md files; injects skills catalog with progressive disclosure |
-| `subagents.py` | `SubAgentMiddleware` | Provides `task` tool for delegating to ephemeral synchronous sub-agents |
-| `async_subagents.py` | `AsyncSubAgentMiddleware` | Provides 5 tools for managing background tasks on remote LangGraph deployments |
-| `summarization.py` | `SummarizationMiddleware`, `SummarizationToolMiddleware` | Automatic and on-demand conversation compaction |
-| `patch_tool_calls.py` | `PatchToolCallsMiddleware` | Fixes dangling tool calls when user messages interrupt before tool results arrive |
+| [`filesystem.md`](filesystem.md) | `FilesystemMiddleware` | All file and shell tools |
+| [`skills.md`](skills.md) | `SkillsMiddleware` | Skill catalog injection |
+| [`memory.md`](memory.md) | `MemoryMiddleware` | AGENTS.md loading |
+| [`subagents.md`](subagents.md) | `SubAgentMiddleware`, `AsyncSubAgentMiddleware` | Subagent task delegation |
+| [`async_subagents.md`](async_subagents.md) | `AsyncSubAgentMiddleware` | Background remote tasks |
+| [`summarization.md`](summarization.md) | `SummarizationMiddleware`, `SummarizationToolMiddleware` | Context compaction |
+| [`human_in_the_loop.md`](human_in_the_loop.md) | `HumanInTheLoopMiddleware` | HITL approval gates |
 
-## How Files Relate
+---
 
-All middleware files follow the same pattern:
-1. Define a state schema extending `AgentState` (optional, for stateful middleware)
-2. Implement `before_agent()` for pre-run initialization (e.g., loading skills or memory)
-3. Implement `wrap_model_call()` to intercept LLM requests and inject tools/system prompt
-4. Use `_utils.append_to_system_message` for system prompt injection
+## How Middleware Works
 
-### Dependency Graph
-
-```
-filesystem.py
-  ├── deepagents.backends.*  (all backends)
-  └── deepagents.backends.utils
-
-memory.py
-  └── deepagents.backends.protocol
-
-skills.py
-  └── deepagents.backends.protocol
-
-subagents.py
-  └── deepagents.backends.protocol
-
-async_subagents.py
-  └── langgraph_sdk
-
-summarization.py
-  └── deepagents.backends.protocol
-  └── langchain.agents.middleware.summarization
-
-patch_tool_calls.py
-  └── (no deepagents deps; only langchain/langgraph)
-
-All middleware:
-  └── _utils.append_to_system_message
+Each middleware implements:
+```python
+class MyMiddleware(AgentMiddleware):
+    def wrap_model_call(self, model_call: Callable, state: AgentState, config: RunnableConfig) -> Callable:
+        # modify state, inject system prompt, add tools, etc.
+        # return a modified model_call
+        ...
 ```
 
-## Default Middleware Stack
+Middlewares compose: each one receives the partially-wrapped `model_call` from the middleware above it and can add more behavior before/after calling it.
 
-`create_deep_agent()` assembles this stack for the main agent (in order):
-1. `TodoListMiddleware` (from langchain)
-2. `SkillsMiddleware` (if `skills` provided)
-3. `FilesystemMiddleware`
-4. `SubAgentMiddleware`
-5. `SummarizationMiddleware`
-6. `PatchToolCallsMiddleware`
-7. `AsyncSubAgentMiddleware` (if async subagents provided)
-8. User-provided `middleware`
-9. `AnthropicPromptCachingMiddleware`
-10. `MemoryMiddleware` (if `memory` provided)
-11. `HumanInTheLoopMiddleware` (if `interrupt_on` provided)
+Common patterns:
+- **Tool injection:** bind additional tools to the model (`model.bind_tools([...])`)
+- **System prompt injection:** prepend or append text to the system message
+- **Pre-call hook:** inspect state before the model runs
+- **Post-call hook:** process the model's response (e.g., save a summary)
 
-Memory and caching are placed last so memory updates do not invalidate the Anthropic prompt cache prefix.
+---
+
+## Excluding Middleware
+
+Pass class names or alias strings to `exclude_middleware` in `create_deep_agent()`:
+
+```python
+graph = create_deep_agent(
+    exclude_middleware=["SkillsMiddleware", "TodoListMiddleware"]
+)
+```
+
+`FilesystemMiddleware` and `SubAgentMiddleware` cannot be excluded.
+
+---
+
+## Ordering Principles
+
+- **Outermost (last in list):** runs first; sees the original state
+- **Innermost (first in list):** runs last; closest to the model call
+- `HumanInTheLoopMiddleware` is outermost so it can intercept tool calls before they execute
+- `AnthropicPromptCachingMiddleware` is near-outermost so it marks cache boundaries on the fully assembled prompt
+
+---
+
+## See Also
+
+- [../graph.md](../graph.md) — `create_deep_agent()` assembles the stack
+- [filesystem.md](filesystem.md) — the most important middleware (file/shell tools)
+- [human_in_the_loop.md](human_in_the_loop.md) — HITL gates
+- [summarization.md](summarization.md) — context window management

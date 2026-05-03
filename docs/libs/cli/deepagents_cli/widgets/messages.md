@@ -1,95 +1,80 @@
-# `widgets/messages.py`
+# `deepagents_cli/widgets/messages.py`
 
 ## High-Level Purpose
 
-This module defines the message widget classes used to display different types of messages in the chat history. Each widget type renders a specific kind of content: user messages, assistant responses (with Markdown streaming), tool call status, skill invocations, errors, and app notifications.
+`messages.py` contains all the widget classes used to display conversation turns in the scrollable transcript. Each message type is a distinct widget so Textual can efficiently update only the changed portion of the screen — appending tokens to an `AssistantMessage` doesn't re-render `UserMessage` widgets above it.
 
-## Classes
+---
 
-### `_TimestampClickMixin`
+## Message Widget Classes
 
-A mixin for any message widget that shows a timestamp toast when clicked. Looks up the message's creation timestamp from the `MessageStore` and displays it as a toast notification.
+### `UserMessage(Widget)`
 
-**Methods:**
-- `on_click(event)` — Shows a timestamp toast via `_show_timestamp_toast`.
+Displays the user's input. Features:
+- `@file` mentions are highlighted in a distinct color
+- `/command` text is styled to stand out
+- Multi-line messages render correctly
+- Shows a timestamp on hover
 
-### `UserMessage`
+### `AssistantMessage(Widget)`
 
-**Inherits from:** `textual.widgets.Static`, `_TimestampClickMixin`
+Displays the agent's text response. Features:
+- **Streaming:** tokens are appended progressively as they arrive from the SSE stream. The widget calls `self.refresh()` after each append, producing the "typewriter" effect.
+- **Markdown rendering:** the final response is rendered as Rich Markdown (code blocks, bold, links, tables)
+- **Copy:** keyboard shortcut copies the full message text to clipboard
 
-Displays a user's chat message. Shows the text with syntax highlighting for `@file` mentions and mode prefixes (shell `!`, command `/`). Shows a colored mode badge if the message was sent in shell or command mode.
+### `ToolCallMessage(Widget)`
 
-### `QueuedUserMessage`
+Displays a tool invocation and its result as a collapsible pair. Layout:
 
-**Inherits from:** `textual.widgets.Static`
+```
+▶ execute("ls -la /home")          [status: completed ✓]
+  └─ Result:
+     total 48
+     drwxr-xr-x 12 user ...
+```
 
-A dimmed placeholder for a user message that has been submitted but not yet processed (shown while waiting for the agent response).
+States:
+- `PENDING` — tool called, result not yet received (shows spinner)
+- `APPROVED` — user approved (for HITL tools)
+- `REJECTED` — user rejected
+- `COMPLETED` — result received
+- `ERROR` — tool raised an exception
 
-### `AssistantMessage`
+Tool arguments are pretty-printed JSON. Results are truncated if too long (with a "show more" expander).
 
-**Inherits from:** `textual.containers.Vertical`
+### `DiffMessage(Widget)`
 
-Displays an AI assistant message with Markdown rendering. Supports streaming (token-by-token updates via `MarkdownStream`).
+Displays a file edit as a colored unified diff. Shown when `write_file` or `edit_file` produces a diff. Uses Rich's syntax highlighting for diff output.
 
-**Key Attributes:**
-- `is_streaming: bool` — Whether the message is currently being streamed.
+### `ErrorMessage(Widget)`
 
-**Key Methods:**
-- `start_streaming() -> None` — Switches to streaming mode with a `MarkdownStream` widget.
-- `append_text(text: str) -> None` — Appends streamed text tokens.
-- `finish_streaming(final_text: str) -> None` — Completes streaming and renders final Markdown.
+Displays an error (network failure, server crash, tool exception) in a red-bordered box. Includes the error type and message. Optionally shows a stack trace (hidden by default, expandable).
 
-### `ToolCallMessage`
+---
 
-**Inherits from:** `textual.containers.Vertical`
+## Message Widget Lifecycle
 
-Displays a tool call with its name, status icon, arguments, and output. Supports collapsible output display.
+1. `StreamHandler` produces `UIAction` objects
+2. `CLIApp` applies actions:
+   - `CreateToolCallAction` → `mount(ToolCallMessage(...))`
+   - `AppendTextAction` → `assistant_msg.append_text(chunk)`
+   - etc.
+3. Each widget renders itself via Textual's reactive model
+4. `VerticalScroll` auto-scrolls to the new widget
 
-**States:** pending, running, success, error, rejected, skipped (mapped to `ToolStatus` enum).
+---
 
-**Key Methods:**
-- `set_status(status: ToolStatus) -> None` — Updates the status icon and color.
-- `set_output(text: str) -> None` — Sets the tool output content.
-- `toggle_expand() -> None` — Toggles expanded/collapsed output display.
+## Architecture Notes
 
-### `SkillMessage`
+**Widget identity:** Each `ToolCallMessage` has a `tool_call_id` field. When the server sends a `ToolMessage` result, `CLIApp` looks up the corresponding `ToolCallMessage` by ID and updates it in place — rather than creating a new widget.
 
-**Inherits from:** `textual.containers.Vertical`
+**Markdown rendering timing:** `AssistantMessage` renders as plain text during streaming (for speed) and re-renders as Markdown once the stream ends. This avoids partial Markdown glitches during streaming (e.g., an unclosed `**`).
 
-Displays a skill invocation with its name, status, and content.
+---
 
-### `ErrorMessage`
+## See Also
 
-**Inherits from:** `textual.widgets.Static`, `_TimestampClickMixin`
-
-Displays an error message styled in the error color.
-
-### `AppMessage`
-
-**Inherits from:** `textual.widgets.Static`
-
-Displays informational app-level messages (e.g., `/new thread started`, model switch confirmations).
-
-## Module-Level Functions
-
-### `_show_timestamp_toast(widget) -> None`
-
-Shows a toast notification with the creation timestamp of a message widget. Looks up the `MessageStore` attached to the app.
-
-**Parameters:**
-- `widget`: The message widget whose timestamp to display.
-
-### `_mode_color(mode: str | None, widget_or_app=None) -> str`
-
-Returns the hex color string for an input mode, falling back to the primary theme color.
-
-## Important Imports and Dependencies
-
-| Import | Source | Purpose |
-|---|---|---|
-| `textual.widgets.Static` | textual | Base static widget |
-| `textual.widgets._markdown.MarkdownStream` | textual | Streaming Markdown rendering |
-| `theme` | `deepagents_cli.theme` | Brand colors |
-| `format_tool_display` | `deepagents_cli.tool_display` | Tool argument formatting |
-| `compose_diff_lines` | `widgets.diff` | Diff rendering |
-| `open_style_link` | `widgets._links` | Clickable link creation |
+- [message_store.md](message_store.md) — tracks all message widgets by ID
+- [remote_client.md](../remote_client.md) — produces `UIAction`s that create/update these widgets
+- [approval.md](approval.md) — `ToolCallMessage` with HITL status shows the approval flow

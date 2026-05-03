@@ -1,195 +1,155 @@
-# `app.py`
+# `libs/cli/deepagents_cli/app.py`
 
 ## High-Level Purpose
 
-This module defines the main Textual UI application (`DeepAgentsApp`) for `deepagents-cli`. It is a Textual `App` subclass that provides the full interactive terminal chat interface including:
+`app.py` is the heart of the interactive TUI. It contains `CLIApp`, a Textual `App` subclass that owns the entire widget tree, the message queue, command routing, and the connection to the LangGraph server. Everything the user sees — the status bar, the scrollable transcript, the input field, every modal — lives inside or is orchestrated by `CLIApp`.
 
-- Chat message display and history
-- Chat input with slash-command support
-- Status bar with mode, model, token counts, and git branch
-- Welcome banner
-- Approval menus for Human-in-the-Loop (HITL) tool confirmations
-- Model selector, thread selector, theme selector, MCP viewer, and agent selector modals
-- Token tracking and display
-- Deferred server startup with background workers
-- Session state management (thread IDs, auto-approve)
-- Hot-swapping between agents via `/agents` without restarting the CLI
-- iTerm2 cursor guide workaround for visual compatibility
+---
 
-## Classes
+## Widget Hierarchy
 
-### `QueuedMessage`
+```
+CLIApp
+├── StatusBar          (top bar: model name, token count, mode indicator)
+├── WelcomeBanner      (initial screen, hidden after first message)
+├── VerticalScroll     (scrollable message transcript)
+│   └── [dynamic message widgets appended as agent responds]
+│       ├── UserMessage
+│       ├── AssistantMessage
+│       ├── ToolCallMessage
+│       ├── DiffMessage
+│       └── ErrorMessage
+├── ChatInput          (text input at bottom)
+└── Modal overlays (pushed/popped on demand):
+    ├── ApprovalMenu        (/approve — tool call HITL)
+    ├── AskUserMenu         (agent-initiated clarification)
+    ├── AgentSelector       (/agents)
+    ├── ThreadSelector      (/threads)
+    ├── ModelSelector       (/model)
+    ├── ThemeSelector       (/theme)
+    ├── NotificationCenter  (/notifications)
+    ├── MCPViewer           (/mcp)
+    ├── HelpScreen          (/help)
+    └── UpdateAvailable     (shown on startup if new version exists)
+```
 
-**Type:** `dataclass(frozen=True, slots=True)`
+---
 
-Represents a user message awaiting processing.
+## Key Classes and Functions
 
-| Attribute | Type | Description |
+### `CLIApp(App)` — main application class
+
+**State fields:**
+
+| Field | Type | Purpose |
 |---|---|---|
-| `text` | `str` | The message text content |
-| `mode` | `InputMode` | Input mode determining message routing (`'normal'`, `'shell'`, `'command'`) |
+| `_agent` | `RemoteAgent \| None` | Client for the LangGraph server; `None` until server is ready |
+| `_message_queue` | `deque[QueuedMessage]` | Pending user messages and commands |
+| `_busy_state` | `BusyState` | Tracks whether the agent is currently running |
+| `_current_thread_id` | `str \| None` | Active LangGraph thread ID |
+| `_server_kwargs` | `dict` | Config passed to `start_server_and_get_agent()` |
+| `_stream_handler` | `StreamHandler \| None` | Handles SSE chunks from the server |
 
-### `DeferredAction`
+**Lifecycle methods:**
 
-**Type:** `dataclass(frozen=True, slots=True, kw_only=True)`
+- `on_mount()` — Called by Textual after widgets are created. Kicks off `_start_server()` as an async task.
+- `_start_server()` — Awaits `start_server_and_get_agent()`, then populates `self._agent` and creates a new thread ID. If a resume thread was requested (`-r`), resolves it here.
 
-An action (model switch, thread switch, chat output) deferred until the current busy state resolves.
+**Input routing:**
 
-| Attribute | Type | Description |
+- `on_chat_input_submitted(event)` — Receives user input from `ChatInput`. Classifies the input:
+  - Starts with `/` → `_classify_command()` → `_handle_command()`
+  - Starts with `/skill:` → `_handle_skill_command()`
+  - Normal text → `_enqueue_message()`
+
+### `_classify_command(text) → BypassTier`
+
+Returns a `BypassTier` enum that determines whether a slash command can bypass the queue (execute immediately even while the agent is running) or must wait:
+
+| Tier | Examples | Behavior |
 |---|---|---|
-| `kind` | `DeferredActionKind` | Identity key for deduplication |
-| `execute` | `Callable[[], Awaitable[None]]` | Async callable that performs the actual work |
+| `ALWAYS` | `/quit` | Executes unconditionally |
+| `CONNECTING` | `/version` | Only while server is starting |
+| `IMMEDIATE_UI` | `/agents`, `/model` | Opens a modal immediately |
+| `SIDE_EFFECT_FREE` | `/mcp`, `/trace`, `/changelog` | Side effect fires now; UI update queued |
+| `QUEUED` | Most others | Wait until agent is idle |
 
-`DeferredActionKind` is a `Literal` of `"model_switch"`, `"thread_switch"`, `"chat_output"`, `"agent_switch"`.
+### `_handle_command(text, tier) → None`
 
-### `TextualTokenTracker`
+Routes a slash command to its handler:
 
-Token counter that updates the status bar.
+- `/agents` → push `AgentSelector` modal
+- `/model` → push `ModelSelector` modal
+- `/threads` → push `ThreadSelector` modal
+- `/clear` → queue a "clear" action (starts fresh thread)
+- `/theme` → push `ThemeSelector` modal
+- `/mcp` → push `MCPViewer` modal
+- `/help` → push `HelpScreen`
+- `/quit` → `self.exit()`
+- `/trace` → print LangSmith trace URL
+- `/tokens` → print current token usage
+- `/skill:<name> [args]` → `_handle_skill_command()`
 
-**Methods:**
+### `_process_queue() → None`
 
-- `__init__(update_callback, hide_callback=None)` — Initialize with callbacks to update the display.
-- `add(total_tokens, _output_tokens=0)` — Update token count from a response.
-- `reset()` — Reset token count to 0.
-- `hide()` — Hide the token display (e.g., during streaming).
-- `show()` — Show the token display with current value.
+Called repeatedly via a Textual `set_interval` timer when the agent is idle. Pops the next `QueuedMessage` and dispatches it by calling `_run_agent()`.
 
-### `TextualSessionState`
+### `_run_agent(message) → None`
 
-Session state for the Textual app: manages thread ID and auto-approve flag.
+The main execution path for a user message:
 
-**Methods:**
+1. Sets `_busy_state` to `RUNNING`, disables `ChatInput`
+2. Creates or reuses a `UserMessage` widget in the transcript
+3. Calls `self._agent.astream(message, thread_id=self._current_thread_id)`
+4. Iterates the SSE stream, calling `self._stream_handler.handle_chunk(chunk)` for each update
+5. On completion (or error), resets `_busy_state` and re-enables `ChatInput`
 
-- `__init__(*, auto_approve=False, thread_id=None)` — Initialize session state; generates a UUID7 if no `thread_id` is provided.
-- `reset_thread() -> str` — Generate a new UUID7 thread ID, store it, and return it.
+### `_handle_interrupt(interrupt_data) → dict`
 
-### `DeepAgentsApp`
+Called when the server streams an `__interrupt__` signal (HITL gate). Pushes an `ApprovalMenu` modal, awaits the user's decision (approve / reject / edit), and returns the decision dict to `_run_agent()` for re-submission to the server.
 
-**Inherits from:** `textual.app.App`
+### `_handle_ask_user(question) → str`
 
-The main Textual application. Manages the full TUI lifecycle.
+Called when the agent triggers the `ask_user` tool. Pushes an `AskUserMenu` modal and returns the user's text response.
 
-**Class Variables:**
-| Attribute | Value | Description |
-|---|---|---|
-| `TITLE` | `"Deep Agents"` | Textual window title |
-| `CSS_PATH` | `"app.tcss"` | Path to the Textual CSS stylesheet |
-| `ENABLE_COMMAND_PALETTE` | `False` | Disables Textual's built-in command palette |
-| `SCROLL_SENSITIVITY_Y` | `1.0` | Vertical scroll speed |
-| `BINDINGS` | `[...]` | App-level keybindings (see below) |
+---
 
-**Key Bindings:**
-| Key | Action | Description |
-|---|---|---|
-| `escape` | `interrupt` | Interrupt current agent turn |
-| `ctrl+c` | `quit_or_interrupt` | Quit or interrupt |
-| `ctrl+d` | `quit_app` | Quit the app |
-| `ctrl+t` / `shift+tab` | `toggle_auto_approve` | Toggle auto-approve mode |
-| `ctrl+o` | `toggle_tool_output` | Toggle tool output display |
-| `ctrl+x` | `open_editor` | Open external editor for prompt composition |
-| `up/k`, `down/j`, `enter` | `approval_up/down/select` | Navigate approval menu |
-| `y/1`, `a/2`, `n/3` | `approval_yes/auto/no` | Approve/auto/reject in approval menu |
+## Message Queue Flow
 
-**Inner Messages:**
-- `ServerReady` — Posted when the background server-startup worker succeeds. Contains `agent`, `server_proc`, and `mcp_server_info`.
-- `ServerStartFailed` — Posted when the background server-startup worker fails. Contains `error`.
-- `AgentSwitched` — Posted after a successful agent swap via `_switch_agent`; carries the new agent name for display.
+```
+User types → ChatInput.Submitted event
+    │
+    ├─ command? ──→ classify tier
+    │                  ├─ ALWAYS / IMMEDIATE_UI → execute now
+    │                  └─ QUEUED → enqueue
+    │
+    └─ normal text → enqueue
+                         │
+                  _message_queue (deque)
+                         │
+                  _process_queue() [polling timer, only runs when idle]
+                         │
+                  _run_agent(message)
+                         │
+                  RemoteAgent.astream()  → SSE stream → StreamHandler
+```
 
-**Constructor Parameters:**
+---
 
-| Parameter | Type | Description |
-|---|---|---|
-| `agent` | `Pregel \| None` | Pre-configured LangGraph agent |
-| `assistant_id` | `str \| None` | Agent identifier for memory storage |
-| `backend` | `CompositeBackend \| None` | Backend for file operations |
-| `auto_approve` | `bool` | Start with auto-approve enabled |
-| `cwd` | `str \| Path \| None` | Working directory to display |
-| `thread_id` | `str \| None` | Thread ID for the session |
-| `resume_thread` | `str \| None` | Resume intent from `-r` flag |
-| `initial_prompt` | `str \| None` | Optional prompt to auto-submit at start |
-| `mcp_server_info` | `list[MCPServerInfo] \| None` | MCP server metadata |
-| `profile_override` | `dict[str, Any] \| None` | Extra profile fields from `--profile-override` |
-| `server_proc` | `ServerProcess \| None` | LangGraph server process |
-| `server_kwargs` | `dict[str, Any] \| None` | Kwargs for deferred server startup |
-| `mcp_preload_kwargs` | `dict[str, Any] \| None` | Kwargs for `_preload_session_mcp_server_info` |
-| `model_kwargs` | `dict[str, Any] \| None` | Kwargs for deferred `create_model()` |
+## Architecture Notes
 
-## Agent Switching
+**Textual's reactive model:** `CLIApp` uses Textual's `reactive` properties for a few shared states (e.g., the "busy" indicator in the status bar). Widget mutations from the SSE stream handler are always dispatched via `call_from_thread()` or `post_message()` to ensure thread safety, since SSE processing runs in an async task.
 
-`DeepAgentsApp` supports hot-swapping between agents installed in `~/.deepagents/` via the `/agents` slash command without restarting the CLI.
+**Modal management:** Modals are pushed onto the screen stack with `self.push_screen(modal)`. They return their result via `await`. This lets `_handle_interrupt` and `_handle_ask_user` `await` the modal result cleanly.
 
-### `_switch_agent(agent_name: str) -> None`
+**Scroll-to-bottom:** After appending a message widget, the app calls `scroll_to_widget(widget, animate=False)` to keep the transcript pinned to the latest output.
 
-Orchestrates the three-phase agent switch in a background worker:
-1. **UI teardown** — guards against re-entry and blocks if a task is mid-run.
-2. **Server restart** — calls `_restart_server_for_agent_swap(agent_name)` which stages the new `assistant_id` in the environment and calls `ServerProcess.restart()`.
-3. **Confirmation + state reset** — resets the thread, refreshes skill discovery, and displays a confirmation hint. On failure, performs rollback.
+---
 
-**Guards:** Disabled in remote-server mode (`--remote`). Prevents re-entry via a lock.
+## See Also
 
-### `_restart_server_for_agent_swap(agent_name: str) -> None`
-
-Low-level helper that stages the new `assistant_id` in the subprocess environment and calls `ServerProcess.restart()`. Called by `_switch_agent` during step 2.
-
-### `_resolve_agent_arg` (in `main.py`)
-
-Determines the agent to launch with the following precedence:
-1. Explicit `-a / --agent` flag.
-2. Skipped entirely when `-r / --remote` is present.
-3. `[agents].recent` from `config.toml` if that directory still exists.
-4. Default agent name (`"agent"`).
-
-This ensures subcommands like `threads list` do not accidentally inherit the recent agent.
-
-### `save_recent_agent` / `load_recent_agent` (in `model_config.py`)
-
-Persist and retrieve the most recently used agent name under `[agents].recent` in `config.toml`. Built on the generalized `_save_toml_field(section, field, value)` helper (same read-modify-write logic used for `[ui].theme`).
-
-## Module-Level Functions
-
-### `_load_theme_preference() -> str`
-
-Reads the saved theme name from `~/.deepagents/config.toml` under `[ui].theme`. Falls back to `theme.DEFAULT_THEME` if the file is missing, corrupt, or the stored name is unknown.
-
-**Returns:** A Textual theme name string.
-
-### `save_theme_preference(name: str) -> bool`
-
-Persists the theme preference to `~/.deepagents/config.toml`. Uses an atomic write (temp file + rename) to avoid corruption.
-
-**Parameters:**
-- `name`: Textual theme name to save.
-
-**Returns:** `True` if saved successfully, `False` on any error.
-
-### `_extract_model_params_flag(raw_arg: str) -> tuple[str, dict[str, Any] | None]`
-
-Extracts the `--model-params` flag and its JSON value from a `/model` command argument string. Handles quoted and bare JSON objects.
-
-**Returns:** `(remaining_args, parsed_dict | None)`.
-
-## Module-Level Constants
-
-| Constant | Type | Description |
-|---|---|---|
-| `_IS_ITERM` | `bool` | Whether running inside iTerm2 |
-| `_ITERM_CURSOR_GUIDE_OFF/ON` | `str` | iTerm2 OSC 1337 escape sequences |
-| `_TYPING_IDLE_THRESHOLD_SECONDS` | `float` | 2.0s — idle threshold for showing deferred approval |
-| `_DEFERRED_APPROVAL_TIMEOUT_SECONDS` | `float` | 30.0s — max wait for deferred approval |
-| `_COMMAND_URLS` | `dict[str, str]` | Slash-command to URL mapping for browser-opening commands |
-
-## Important Imports and Dependencies
-
-| Import | Source | Purpose |
-|---|---|---|
-| `textual.app.App` | textual | Base Textual application |
-| `textual.binding.Binding` | textual | Key bindings |
-| `textual.screen.ModalScreen` | textual | Modal screens (model selector, etc.) |
-| `DeepAgentsApp` from theme, config | local | Brand colors, settings |
-| `ChatInput` | `widgets.chat_input` | Chat input widget |
-| `LoadingWidget` | `widgets.loading` | Animated spinner |
-| `MessageStore`, `MessageData` | `widgets.message_store` | Virtualized message store |
-| `StatusBar` | `widgets.status` | Bottom status bar |
-| `WelcomeBanner` | `widgets.welcome` | Startup banner |
-| `SessionStats`, `SpinnerStatus` | `_session_stats` | Token tracking |
-| `CLIContext` | `_cli_context` | Runtime context type |
+- [main.md](main.md) — how `run_textual_app()` is called
+- [remote_client.md](remote_client.md) — `RemoteAgent` and `StreamHandler`
+- [server_manager.md](server_manager.md) — `start_server_and_get_agent()`
+- [widgets/README.md](widgets/README.md) — all widget classes
+- [command_registry.md](command_registry.md) — slash command definitions

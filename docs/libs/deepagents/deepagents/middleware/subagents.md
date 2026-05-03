@@ -2,97 +2,94 @@
 
 ## High-Level Purpose
 
-`SubAgentMiddleware` provides the `task` tool that allows the main agent to delegate complex, multi-step sub-tasks to ephemeral sub-agents. Sub-agents have isolated context windows, execute independently, and return a single final message to the main agent.
+`subagents.py` defines the `SubAgent` spec type and `SubAgentMiddleware`, which adds a `task` tool to the agent. The `task` tool lets the parent agent spawn ephemeral sub-agents for specific delegated work — for example, "use the researcher sub-agent to look up X". Each sub-agent runs its own independent LangGraph graph and returns a single result.
 
-This module defines two TypedDicts for specifying subagents declaratively (`SubAgent`) or with a pre-compiled runnable (`CompiledSubAgent`), and the `SubAgentMiddleware` class that builds and invokes them.
+---
 
-## TypedDicts
+## Key Types
 
-### `SubAgent`
+### `SubAgent` (TypedDict)
 
-A declarative specification for a synchronous sub-agent.
+The configuration spec for a sub-agent:
 
-| Field | Required | Type | Description |
-|---|---|---|---|
-| `name` | Yes | `str` | Unique identifier; used by the main agent in `task` tool calls |
-| `description` | Yes | `str` | What this subagent does; main agent uses this to decide when to delegate |
-| `system_prompt` | Yes | `str` | Instructions for the sub-agent |
-| `tools` | No | `Sequence[...]` | Tools for this agent; inherits main agent's tools if omitted |
-| `model` | No | `str \| BaseChatModel` | Override the main agent's model |
-| `middleware` | No | `list[AgentMiddleware]` | Additional middleware |
-| `interrupt_on` | No | `dict[str, bool \| InterruptOnConfig]` | HITL tool interrupts |
-| `skills` | No | `list[str]` | Skill source paths for `SkillsMiddleware` |
+| Field | Required | Description |
+|---|---|---|
+| `name` | Yes | Identifier used in `task(subagent_type="name")` |
+| `description` | Yes | Tells the parent when to use this sub-agent |
+| `system_prompt` | No | System prompt for the sub-agent |
+| `model` | No | Model override (defaults to parent's model) |
+| `tools` | No | Tool list override (defaults to parent's tools) |
+| `middleware` | No | Additional middleware for this sub-agent |
+| `interrupt_on` | No | Tool names that pause for HITL in this sub-agent |
+| `skills` | No | Skill paths for this sub-agent |
+| `permissions` | No | Filesystem permissions for this sub-agent |
 
-When using `create_deep_agent`, `SubAgent` entries automatically receive the default middleware stack prepended (TodoList, Filesystem, Summarization, PatchToolCalls, optional Skills, AnthropicPromptCaching).
+### `CompiledSubAgent` (TypedDict)
 
-### `CompiledSubAgent`
+A pre-compiled sub-agent:
 
-A pre-compiled agent spec. Use when you have a custom LangGraph graph or a `create_agent()` runnable.
+| Field | Description |
+|---|---|
+| `name` | Same as `SubAgent.name` |
+| `description` | Same as `SubAgent.description` |
+| `runnable` | A `Runnable` that accepts messages and returns a response |
 
-| Field | Required | Type | Description |
-|---|---|---|---|
-| `name` | Yes | `str` | Unique identifier |
-| `description` | Yes | `str` | What this subagent does |
-| `runnable` | Yes | `Runnable` | The compiled agent graph |
+Use `CompiledSubAgent` when you want to bring your own graph rather than using `create_deep_agent()`.
 
-The runnable's state schema must include a `messages` key. The final message is extracted and returned as a `ToolMessage` to the parent agent.
+---
 
-## Constants
+## Key Class
 
-### `DEFAULT_SUBAGENT_PROMPT`
-Default system prompt addition for sub-agents: `"In order to complete the objective that the user asks of you, you have access to a number of standard tools."`
+### `SubAgentMiddleware(AgentMiddleware)`
 
-### `GENERAL_PURPOSE_SUBAGENT` (imported from this module in `graph.py`)
-The spec for the auto-added general-purpose subagent. Has `name="general-purpose"`.
+Adds the `task` tool and injects sub-agent catalog into the system prompt.
 
-### `TASK_TOOL_DESCRIPTION`
-Large agent-facing description of the `task` tool. Includes:
-- Available agent types with descriptions
-- 7 usage rules (parallel launch, context isolation, detailed task descriptions)
-- Multiple worked examples with commentary explaining when/why to use subagents
+**The `task` tool:**
 
-### `_EXCLUDED_STATE_KEYS`
-`{"messages", "todos", "structured_response", "skills_metadata", "memory_contents"}` — State keys filtered out when passing state to sub-agents and when returning updates. Prevents parent state from leaking to child agents and avoids conflicts with non-reduceable keys.
-
-### `_subagent_tracing_context() -> Generator`
-
-A context manager that tags subagent runs with `ls_agent_type="subagent"` in the LangSmith tracing metadata. This mirrors LangChain's `ls_agent_type="root"` tagging behavior on the main agent, enabling trace display features in LangSmith to distinguish root from sub-agent runs. All other current tracing-context fields (parent, client, tags, etc.) are forwarded unchanged so the enclosing context is not clobbered. Both sync (`task`) and async (`atask`) invocations are wrapped with this context manager.
-
-## Class: `SubAgentMiddleware(AgentMiddleware)`
-
-Wraps the LLM call to provide the `task` tool. Does not inject system prompt content; the task tool description conveys the available subagents.
-
-### Constructor
-
-```python
-SubAgentMiddleware(
-    backend: BackendProtocol | BackendFactory,
-    subagents: list[SubAgent | CompiledSubAgent],
-)
+```
+task(subagent_type: str, description: str) → str
 ```
 
-### Tool: `task`
+- `subagent_type` — name of the sub-agent to invoke
+- `description` — detailed description of what to do (becomes the sub-agent's first human message)
+- Returns the sub-agent's final response as a string
 
-The main tool exposed by this middleware. Takes:
-- `description` — Detailed task description for the sub-agent.
-- `subagent_type` — Name of the sub-agent to use.
+**Sub-agent invocation steps:**
 
-**Execution flow:**
-1. Looks up the subagent spec by `subagent_type`.
-2. For `CompiledSubAgent`: invokes `spec["runnable"]` directly.
-3. For `SubAgent`: calls `create_agent(model, system_prompt, tools, middleware)` to build the agent, then invokes it.
-4. Passes shared state (excluding `_EXCLUDED_STATE_KEYS`) to the sub-agent so it shares the parent's filesystem and todos.
-5. Extracts the final message from the sub-agent's `messages` list.
-6. Returns a `Command(update={"messages": [ToolMessage(result)]})` to merge the sub-agent's state updates (files, todos, etc.) back into the parent agent's state.
+1. Strips state keys that shouldn't pass to sub-agents: `todos`, `skills_metadata`, `memory_contents`, `structured_response`
+2. Invokes the sub-agent's compiled graph with the description as the first message
+3. Extracts the final `AIMessage` content from the sub-agent's output
+4. Returns it as a `ToolMessage` to the parent
 
-Both sync (`task`) and async (`atask`) versions are provided.
+---
 
-## Dependencies
+## General-Purpose Sub-agent
 
-- `langchain.agents.create_agent`
-- `langchain.agents.middleware.HumanInTheLoopMiddleware`, `InterruptOnConfig`
-- `langchain_core.messages`, `langchain_core.tools`
-- `langgraph.types.Command`
-- `langsmith.run_helpers.get_tracing_context`, `tracing_context` — for `ls_agent_type` tagging
-- `deepagents.backends.protocol` — `BackendFactory`, `BackendProtocol`
-- `deepagents.middleware._utils.append_to_system_message`
+`create_deep_agent()` auto-adds a general-purpose sub-agent unless disabled. It has:
+- The same tools as the parent agent
+- The same permissions
+- No specialized system prompt beyond the default
+
+This means any task delegation works out-of-the-box, even without explicitly configuring sub-agents.
+
+---
+
+## Parallel Dispatch
+
+Sub-agents can be invoked in parallel. The agent can call `task()` multiple times in a single response (via parallel tool calls), and the middleware dispatches them concurrently using `asyncio.gather()`. Results arrive together before the next model call.
+
+---
+
+## Architecture Notes
+
+**State isolation:** Each sub-agent invocation starts a fresh conversation with only the task description as the first message. There is no shared state — the sub-agent can't read the parent's conversation history.
+
+**No bidirectional communication:** Sub-agents are fire-and-return. There are no callbacks or mid-execution updates. The parent gets one final response.
+
+---
+
+## See Also
+
+- [README.md](README.md) — middleware stack
+- [async_subagents.md](async_subagents.md) — background (non-blocking) sub-agents
+- [../graph.md](../graph.md) — `subagents` parameter

@@ -2,117 +2,97 @@
 
 ## High-Level Purpose
 
-`FilesystemMiddleware` is the core middleware that provides file system tools to agents: `ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, and `execute`. It also handles:
-- Dynamic tool availability (removes `execute` if the backend doesn't support it)
-- Large tool result eviction (offloads oversized results to the filesystem rather than returning them inline)
-- Filesystem state management via the `FilesystemState` schema
+`FilesystemMiddleware` is the most important middleware. It adds the six built-in file and shell tools to the agent's tool list: `ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, and (when the backend supports it) `execute`. It also enforces filesystem permission rules, ensuring tools can only access allowed paths and perform allowed operations.
 
-## Key Constants
+---
 
-| Constant | Value | Purpose |
-|---|---|---|
-| `GLOB_TIMEOUT` | `20.0` | Seconds before async glob is cancelled |
-| `DEFAULT_READ_OFFSET` | `0` | Default starting line for read_file |
-| `DEFAULT_READ_LIMIT` | `100` | Default max lines for read_file |
-| `NUM_CHARS_PER_TOKEN` | `4` | Approximate characters per token for truncation |
-| `TOOLS_EXCLUDED_FROM_EVICTION` | tuple | Tools that skip the large-result eviction logic |
+## Key Class
 
-`TOOLS_EXCLUDED_FROM_EVICTION` = `("ls", "glob", "grep", "read_file", "edit_file", "write_file")` — these tools either have built-in truncation or are too small to ever exceed limits.
+### `FilesystemMiddleware(AgentMiddleware)`
 
-## Important Types
+**Constructor parameters:**
 
-### `FilesystemState(AgentState)`
-LangGraph state schema extension for filesystem middleware.
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `backend` | `BackendProtocol` | required | The storage backend |
+| `permissions` | `list[FilesystemPermission]` | `[]` | Access control rules |
+| `custom_tool_descriptions` | `dict[str, str]` | `{}` | Override tool descriptions |
+| `max_read_lines` | `int` | `2000` | Truncate reads at this many lines |
 
-**Fields:**
-- `files: Annotated[NotRequired[dict[str, FileData]], _file_data_reducer]` — In-memory file dictionary. Uses the custom `_file_data_reducer` which supports file deletion via `None` values.
+---
 
-### `_file_data_reducer(left, right) -> dict`
-Custom LangGraph state reducer for the `files` field. Supports deletion: if a key in `right` maps to `None`, the corresponding key is removed from the merged result.
+## Built-in Tools
 
-## Tool Description Constants
+### `ls(path: str)`
 
-Large docstrings defining the agent-facing descriptions for each tool:
-- `LIST_FILES_TOOL_DESCRIPTION` — `ls`
-- `READ_FILE_TOOL_DESCRIPTION` — `read_file` (includes pagination guidance, image handling instructions)
-- `EDIT_FILE_TOOL_DESCRIPTION` — `edit_file`
-- `WRITE_FILE_TOOL_DESCRIPTION` — `write_file`
-- `GLOB_TOOL_DESCRIPTION` — `glob`
-- `GREP_TOOL_DESCRIPTION` — `grep`
-- `EXECUTE_TOOL_DESCRIPTION` — `execute`
-- `FILESYSTEM_SYSTEM_PROMPT` — Injected into the system message; explains filesystem tools
-- `EXECUTION_SYSTEM_PROMPT` — Injected when execution is available
+Lists directory contents. Returns entries with name, type (file/dir), size, and modification time. Formatted as a simple table.
 
-## Key Helper Functions
+### `read_file(path: str, start_line: int = None, end_line: int = None)`
 
-### `_supports_execution(backend) -> bool`
-Checks if a backend supports `execute()`. For `CompositeBackend`, inspects the `default` sub-backend.
+Reads a file. Output is formatted as `cat -n` (line numbers prefix). Binary files are returned as base64. Truncated to `max_read_lines` with a "file truncated" note.
 
-### `_create_content_preview(content_str, *, head_lines=5, tail_lines=5) -> str`
-Creates a formatted preview of large content showing the first and last few lines with a truncation marker.
+### `write_file(path: str, content: str)`
 
-### `_extract_text_from_message(message: ToolMessage) -> str`
-Extracts the text content from a tool message for eviction analysis.
+Writes or overwrites a file. Creates parent directories if needed. Shows a diff of the change in the tool result.
 
-## Class: `FilesystemMiddleware(AgentMiddleware[FilesystemState, ContextT, ResponseT])`
+### `edit_file(path: str, old_string: str, new_string: str, replace_all: bool = False)`
 
-The primary middleware class. Wraps every LLM call to inject filesystem tools and handle results.
+Performs an exact string replacement. Fails with an error if `old_string` is not found (or not unique, unless `replace_all=True`). Returns a diff of the change.
 
-### Constructor
+### `glob(pattern: str)`
 
+Finds files matching a glob pattern. Supports `*`, `**`, `?`, `[abc]`. Returns a list of matching paths.
+
+### `grep(path: str, pattern: str, recursive: bool = False)`
+
+Searches for a literal string (or regex, controlled by call site) in file contents. Returns matching lines with file path and line number. Not a full regex grep by default — pattern is treated as a literal string for safety.
+
+### `execute(command: str, env: dict = None)`
+
+Runs a shell command. Only added to the tool list if the backend implements `SandboxBackendProtocol`. Returns `stdout`, `stderr`, and `exit_code`. The agent is instructed to check `exit_code` and re-read files after writes.
+
+---
+
+## Permission System
+
+`FilesystemPermission` rules are checked at tool-call time before the backend is called.
+
+**Rule structure:**
 ```python
-FilesystemMiddleware(backend: BackendProtocol | BackendFactory)
+FilesystemPermission(
+    operations=["read", "write"],   # or ["execute"], ["*"]
+    paths=["/workspace/**"],         # wcmatch glob patterns
+    mode="allow"                     # or "deny"
+)
 ```
 
-**Parameters:**
-- `backend` — Backend instance or factory function. A factory (`lambda rt: StateBackend(rt)`) is resolved at tool-call time against the `ToolRuntime`.
+**Matching:**
+- Rules are checked in order; first match wins
+- Operations: `"read"`, `"write"`, `"edit"`, `"execute"`, `"ls"`, `"glob"`, `"grep"`, `"*"` (all)
+- Path patterns use wcmatch globbing (`**` = any depth)
+- Default (no rules): allow all
 
-### State Schema
-`state_schema = FilesystemState`
+**Example — read-only access:**
+```python
+permissions=[
+    FilesystemPermission(operations=["write", "execute"], paths=["/**"], mode="deny"),
+]
+```
 
-### Key Methods
+---
 
-#### `wrap_model_call(request, handler) -> ModelResponse`
-The core interception point. Before forwarding to the LLM:
-1. Conditionally adds `EXECUTION_SYSTEM_PROMPT` to the system message if the backend supports execution.
-2. Filters out the `execute` tool if execution is not supported.
+## Architecture Notes
 
-#### `awrap_model_call(request, handler) -> ModelResponse`
-Async version of `wrap_model_call`.
+**Tool description customization:** The `custom_tool_descriptions` dict maps tool name to a custom description string. This lets you tune what the agent is told about the tool without subclassing.
 
-#### Tool Implementations
+**`execute` conditionality:** The tool is only added if `isinstance(backend, SandboxBackendProtocol)`. This means using `FilesystemBackend` (no shell) automatically means no `execute` tool, with no code changes needed.
 
-All tools are defined as `StructuredTool` instances returned by internal builder methods. Each tool:
-- Receives a `ToolRuntime` parameter injected by LangGraph
-- Resolves the backend from `self._backend` (instance or factory)
-- Calls the appropriate backend method
-- Handles errors and formats results
+**`edit_file` exactness:** The old-string requirement for `edit_file` is intentional — it forces the agent to read the file first and use the actual content, preventing blind overwrites.
 
-**`ls` tool:** Lists directory contents. Formats `FileInfo` entries as a table. Truncates if too many results.
+---
 
-**`read_file` tool:** Reads a file with optional offset/limit. Adds line numbers via `format_content_with_line_numbers`. Handles images as multimodal content blocks. Returns truncation message for very long lines.
+## See Also
 
-**`write_file` tool:** Creates a new file. Returns `Command(update={"files": ...})` for checkpoint backends (merges `files_update` into LangGraph state). Returns plain string for external backends.
-
-**`edit_file` tool:** Replaces a string in an existing file. Requires the file to have been read first (validates via conversation history). Returns `Command` or string similar to `write_file`.
-
-**`glob` tool:** Finds files matching a pattern. Has an async timeout of `GLOB_TIMEOUT` seconds.
-
-**`grep` tool:** Searches file contents for a literal text pattern. Supports `output_mode` parameter (`"files_with_matches"`, `"content"`, `"count"`).
-
-**`execute` tool:** Runs a shell command via the backend's `execute()`. Forwards `timeout` if the backend supports it. Returns error if execution is not supported.
-
-#### Large Result Eviction
-
-After tool execution, `FilesystemMiddleware` inspects the result's token count. If a tool result exceeds the threshold and is not in `TOOLS_EXCLUDED_FROM_EVICTION`, the result is:
-1. Written to a file under `/large_tool_results/{sanitized_tool_call_id}`
-2. Replaced in the message with `TOO_LARGE_TOOL_MSG` (which includes a content preview and instructions to use `read_file`)
-
-## Dependencies
-
-- `langchain.agents.middleware.types` — `AgentMiddleware`, `AgentState`, etc.
-- `deepagents.backends.*` — all backend types
-- `deepagents.backends.utils` — formatting helpers
-- `deepagents.middleware._utils.append_to_system_message`
-- `langchain_core.messages`, `langchain_core.tools`
-- `langgraph.types.Command`
+- [README.md](README.md) — middleware stack overview
+- [../backends/protocol.md](../backends/protocol.md) — BackendProtocol called by these tools
+- [../backends/README.md](../backends/README.md) — which backend provides `execute`

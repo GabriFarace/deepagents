@@ -1,80 +1,92 @@
-# `widgets/approval.py`
+# `deepagents_cli/widgets/approval.py`
 
 ## High-Level Purpose
 
-This module defines the `ApprovalMenu` widget for the Human-in-the-Loop (HITL) approval system. It displays tool call details and presents the user with options to approve, auto-approve all future calls, or reject a tool call. It uses a tool renderer pattern to show tool-specific previews (e.g., file diffs, command details).
+`ApprovalMenu` is the Human-in-the-Loop (HITL) modal. It appears whenever the agent wants to call a tool that requires user approval (e.g., `execute`, `write_file`). The user can approve, reject, or edit the tool's arguments before the agent proceeds. This is the primary safety mechanism for the interactive CLI.
 
-## Classes
+---
 
-### `ApprovalMenu`
+## Key Class
 
-**Inherits from:** `textual.containers.Container`
+### `ApprovalMenu(ModalScreen)`
 
-The main HITL approval widget. Displays tool call information and captures user decisions.
+A Textual `ModalScreen` that occupies the full screen. Pushed onto the screen stack by `CLIApp._handle_interrupt()` when the server emits an `__interrupt__` event.
 
-**Design decisions:**
-- Uses `Container` base class with `compose()` rather than `Widget`.
-- Keybindings for navigation (not `on_key` handlers).
-- `can_focus = True`, `can_focus_children = False` to prevent focus theft.
-- Tool-specific widgets via the renderer pattern (`tool_renderers.get_renderer`).
+**Displayed information:**
+- Tool name and a human-readable description (e.g., "Execute shell command")
+- Tool arguments, pretty-printed (JSON, with syntax highlighting)
+- For `execute` tool: the shell command highlighted with shell syntax coloring
+- For `write_file`/`edit_file`: a diff preview of proposed changes
+- Keyboard shortcut hints (A = Approve, R = Reject, E = Edit)
 
-**Class Variables:**
+**Actions:**
 
-| Attribute | Type | Description |
+| Key | Action | Effect |
 |---|---|---|
-| `can_focus` | `bool` | `True` — widget can receive keyboard focus |
-| `can_focus_children` | `bool` | `False` — children don't steal focus |
-| `BINDINGS` | `list[BindingType]` | See below |
-| `_MINIMAL_TOOLS` | `frozenset[str]` | Shell tool names that don't need detailed display |
+| `a` / Enter | Approve | Returns `{"decision": "approve"}` to `CLIApp` |
+| `r` | Reject | Returns `{"decision": "reject"}` to `CLIApp` |
+| `e` | Edit | Opens an edit sub-panel with the JSON args pre-filled |
 
-**Bindings:**
-| Key | Action | Description |
-|---|---|---|
-| `up / k` | `move_up` | Navigate options up |
-| `down / j` | `move_down` | Navigate options down |
-| `enter` | `select` | Select highlighted option |
-| `1 / y` | `select_approve` | Approve this tool call |
-| `2 / a` | `select_auto` | Auto-approve all future calls |
-| `3 / n` | `select_reject` | Reject this tool call |
-| `e` | `toggle_expand` | Toggle expanded command view |
+**Edit flow:** When the user presses `e`, `ApprovalMenu` shows an embedded text editor (a Textual `TextArea`) pre-filled with the tool args as JSON. The user can modify the arguments. Pressing Ctrl+S or Enter (in single-line edit) submits the edited args. Returns `{"decision": "approve", "args": <edited_args>}`.
 
-#### Inner Message: `Decided`
-
-Posted when the user makes an approval decision.
-
-| Attribute | Type | Description |
-|---|---|---|
-| `decision` | `dict[str, str]` | Decision dict with type: `'approve'`, `'reject'`, or `'auto_approve_all'` |
-
-#### Constructor
-
+**Result type:**
 ```python
-ApprovalMenu(
-    action_requests: list[dict] | dict,
-    _assistant_id: str | None = None,
-    id: str | None = None,
-    **kwargs
-)
+ApprovalResult = {"decision": "approve" | "reject", "args": dict | None}
 ```
 
-**Parameters:**
-- `action_requests`: One or more tool action request dicts (each has `tool_name` and `tool_args`).
-- `_assistant_id`: Optional assistant ID for context.
+`CLIApp._handle_interrupt()` awaits the modal result, then calls `remote_agent.resume(thread_id, decision=result)`.
 
-## Display Logic
+---
 
-For each tool call:
-1. The tool name and truncated arguments are displayed in the header.
-2. For non-shell tools, a tool-specific widget (from the renderer registry) shows a preview (e.g., file diff, write content).
-3. Unicode security warnings are displayed if dangerous characters are detected in tool arguments.
-4. Three option buttons are shown: Approve, Auto-approve all, Reject.
+## HITL Flow Diagram
 
-## Important Imports and Dependencies
+```
+Agent graph runs
+    │
+    └─ hits interrupt node (e.g., HumanInTheLoopMiddleware)
+            │
+            ▼
+   Server emits __interrupt__ event (via SSE)
+            │
+            ▼
+   StreamHandler → InterruptAction
+            │
+            ▼
+   CLIApp._handle_interrupt(interrupt_data)
+            │
+            ▼
+   push_screen(ApprovalMenu(interrupt_data))  ← user sees modal
+            │
+            ▼ (user presses A / R / E)
+   approval_result = await modal
+            │
+            ▼
+   remote_agent.resume(thread_id, decision=approval_result)
+            │
+            ▼
+   Server resumes graph run with decision
+            │
+            ▼
+   Tool executes (or is skipped if rejected)
+            │
+            ▼
+   Stream continues → normal response widgets
+```
 
-| Import | Source | Purpose |
-|---|---|---|
-| `textual` widgets/containers | textual | UI base classes |
-| `theme` | `deepagents_cli.theme` | Brand colors |
-| `SHELL_TOOL_NAMES`, `get_glyphs`, `is_ascii_mode` | `deepagents_cli.config` | Constants |
-| `check_url_safety`, `detect_dangerous_unicode`, etc. | `deepagents_cli.unicode_security` | Security checks |
-| `get_renderer` | `deepagents_cli.widgets.tool_renderers` | Tool-specific widget factory |
+---
+
+## Architecture Notes
+
+**Interrupt payload:** The LangGraph server serializes interrupt data as a dict with keys like `tool_name`, `tool_args`, `description`, `run_id`. `ApprovalMenu` reads all of these to render the display.
+
+**Non-interactive mode:** In `-n` mode, there is no `ApprovalMenu`. Instead, `ShellAllowListMiddleware` checks commands against the allow-list inline and returns a rejection `ToolMessage` for disallowed commands without pausing execution.
+
+**Multiple interrupts:** A single agent turn can trigger multiple interrupts (e.g., three sequential `execute` calls). Each generates a separate `ApprovalMenu` push, and the TUI processes them one at a time.
+
+---
+
+## See Also
+
+- [app.md](../app.md) — `_handle_interrupt()` calls this modal
+- [remote_client.md](../remote_client.md) — emits `InterruptAction` from `__interrupt__` SSE event
+- [../../deepagents/deepagents/middleware/human_in_the_loop.md](../../deepagents/deepagents/middleware/human_in_the_loop.md) — the middleware that generates interrupts

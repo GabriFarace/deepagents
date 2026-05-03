@@ -1,124 +1,132 @@
-# `deepagents/graph.py`
+# `libs/deepagents/deepagents/graph.py`
 
 ## High-Level Purpose
 
-This is the primary entry point for building a deep agent. It exports `create_deep_agent`, a factory function that assembles a fully configured `CompiledStateGraph` from LangGraph — wiring together the model, tools, backends, and all middleware layers (filesystem, subagents, summarization, skills, memory, caching, and human-in-the-loop).
+`graph.py` is the public API of the `deepagents` SDK. It contains `create_deep_agent()`, the single factory function that assembles a complete LangGraph agent from its components: a model, a backend, middleware, tools, subagents, and an optional checkpointer. The function returns a `CompiledStateGraph` ready to invoke or stream.
 
-## Constants
+---
 
-### `BASE_AGENT_PROMPT`
+## Key Function
 
-A large string constant that defines the default behavioral instructions for every deep agent. It covers:
-- Core behavior (conciseness, no preamble)
-- Professional objectivity (accuracy over validation)
-- Task execution protocol (understand → act → verify)
-- Progress update guidance
+### `create_deep_agent(**kwargs) → CompiledStateGraph`
 
-When a harness profile is active for the selected model, the profile may supply its own `base_system_prompt` (replacing `BASE_AGENT_PROMPT`) and/or a `system_prompt_suffix` appended after the base. The user-supplied `system_prompt` always comes first regardless.
+All parameters are optional; calling `create_deep_agent()` with no arguments returns a working coding assistant using Claude Sonnet 4.6 with an in-memory backend.
 
-## Functions
-
-### `create_deep_agent(...) -> CompiledStateGraph`
-
-The main factory function. Assembles a complete deep agent graph.
-
-**Parameters (grouped by category):**
-
-**Model / Output**
+**Parameters:**
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `model` | `str \| BaseChatModel \| None` | `None` | LLM to use. Accepts provider-prefixed strings like `"openai:gpt-4o"` or pre-initialized `BaseChatModel` instances. **Deprecated:** passing `None` emits a `DeprecationWarning` and defaults to `claude-sonnet-4-6`; will be required in 1.0.0. |
-| `response_format` | `ResponseFormat \| None` | `None` | Structured output schema for the agent's final response. |
-| `context_schema` | `type[Any] \| None` | `None` | Schema for the agent's context object. |
+| `model` | `str \| BaseChatModel` | `"claude-sonnet-4-6"` | LLM to use |
+| `backend` | `BackendProtocol` | `StateBackend()` | File/shell storage backend |
+| `tools` | `list[BaseTool]` | `[]` | Additional tools for the agent |
+| `subagents` | `list[SubAgent \| CompiledSubAgent]` | `[]` | Subagent specs for task delegation |
+| `middleware` | `list[AgentMiddleware]` | `[]` | Additional middleware layers |
+| `checkpointer` | `BaseCheckpointSaver \| None` | `None` | For session persistence |
+| `system_prompt` | `str \| None` | `None` | Custom system prompt (replaces default) |
+| `system_prompt_suffix` | `str \| None` | `None` | Appended after the base system prompt |
+| `exclude_middleware` | `list[str]` | `[]` | Remove built-in middleware by class name or alias |
+| `interrupt_on` | `list[str]` | `[]` | Tool names that trigger HITL approval |
+| `permissions` | `list[FilesystemPermission]` | `[]` | File/path access rules |
+| `memory_paths` | `list[str]` | `[]` | Paths to AGENTS.md memory files |
+| `skills_paths` | `list[str \| tuple]` | `[]` | Paths to skills directories |
+| `add_general_purpose_subagent` | `bool` | `True` | Auto-add a general-purpose subagent |
+| `profile` | `str \| None` | `None` | Harness profile name (e.g., `"openai-responses"`) |
 
-**Behavior / Tools**
+**Return value:** `CompiledStateGraph` — can be invoked with `graph.invoke()`, streamed with `graph.astream()`, or streamed with events via `graph.astream_events()`.
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `tools` | `Sequence[BaseTool \| Callable \| dict] \| None` | `None` | Additional tools to give the agent beyond built-ins. |
-| `system_prompt` | `str \| SystemMessage \| None` | `None` | Custom instructions placed **before** the base prompt. When a `SystemMessage`, preserves `cache_control` markers on content blocks (important for Anthropic prompt cache breakpoints). |
-| `middleware` | `Sequence[AgentMiddleware]` | `()` | User middleware inserted between the base stack and the tail stack. |
-| `subagents` | `Sequence[SubAgent \| CompiledSubAgent \| AsyncSubAgent] \| None` | `None` | Three forms: declarative sync (`SubAgent`), pre-compiled (`CompiledSubAgent`), remote async (`AsyncSubAgent` identified by a `"graph_id"` key). Subagents inherit `interrupt_on` and `permissions` from parent unless they override them. |
-| `skills` | `list[str \| tuple[str, str]] \| None` | `None` | Skill source directories. Each entry is a path string or a `(path, label)` tuple for a labelled source. Later entries override earlier ones for same-named skills ("last wins"). |
-| `memory` | `list[str] \| None` | `None` | Paths to `AGENTS.md` memory files. Display names are auto-derived from paths. |
-| `permissions` | `list[FilesystemPermission] \| None` | `None` | Filesystem permission rules enforced at the tool level. First match wins; unmatched paths are allowed. Subagents inherit unless they specify their own (which fully replaces parent rules). |
+---
 
-**Infrastructure**
+## Default Middleware Stack
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `backend` | `BackendProtocol \| BackendFactory \| None` | `None` | Storage/execution backend. Defaults to `StateBackend()` (ephemeral). For shell access, use a backend implementing `SandboxBackendProtocol`. |
-| `interrupt_on` | `dict[str, bool \| InterruptOnConfig] \| None` | `None` | Tool names to pause on for human-in-the-loop review. |
-| `checkpointer` | `Checkpointer \| None` | `None` | LangGraph checkpointer for persisting state between runs. |
-| `store` | `BaseStore \| None` | `None` | Persistent store (required by `StoreBackend`). |
-| `cache` | `BaseCache \| None` | `None` | LangGraph cache instance. |
-| `debug` | `bool` | `False` | Enables debug mode in the underlying `create_agent` call. |
-| `name` | `str \| None` | `None` | Name for the agent graph. |
+Built in this order (bottom to top of the stack):
 
-**Returns:** A `CompiledStateGraph` configured with a `recursion_limit` of 1000 and metadata tagging the agent as a `deepagents` integration.
+```
+1. TodoListMiddleware          ← task planning (checklist in state)
+2. SkillsMiddleware            ← skill catalog injection
+3. FilesystemMiddleware        ← file + shell tools (required)
+4. SubAgentMiddleware          ← "task" delegation tool (if subagents provided)
+5. SummarizationMiddleware     ← context compaction
+6. PatchToolCallsMiddleware    ← dangling tool call repair
+7. AsyncSubAgentMiddleware     ← remote background tasks (if async subagents)
+8. [user middleware here]
+9. [profile extra_middleware]
+10. _ToolExclusionMiddleware   ← removes excluded tools
+11. AnthropicPromptCachingMiddleware ← adds cache_control marks
+12. MemoryMiddleware           ← AGENTS.md injection (if memory_paths)
+13. HumanInTheLoopMiddleware   ← interrupt gates (if interrupt_on)
+```
 
-## Middleware Stack Assembly
+The user's `middleware` parameter is inserted at position 8. This means user middleware runs after the core tool stack but before caching and HITL.
 
-The middleware stack is divided into three sections assembled in this order:
+---
 
-### 1. Base Stack
+## System Prompt Assembly
 
-| Middleware | Condition |
-|---|---|
-| `TodoListMiddleware` | Always |
-| `SkillsMiddleware` | If `skills` provided |
-| `FilesystemMiddleware` | Always |
-| `SubAgentMiddleware` | If inline subagents present |
-| `SummarizationMiddleware` | Always |
-| `PatchToolCallsMiddleware` | Always |
-| `AsyncSubAgentMiddleware` | If async subagents present |
+System prompt is assembled in this order (each overwrites or appends the previous):
 
-### 2. User Middleware
+```
+[user system_prompt]      ← if provided, replaces the base prompt
+       +
+[BASE_AGENT_PROMPT]       ← if user didn't provide system_prompt
+       +
+[system_prompt_suffix]    ← always appended (if provided)
+```
 
-User-supplied `middleware` is inserted here, between base and tail.
+`BASE_AGENT_PROMPT` (~95 lines) emphasizes: conciseness, objectivity, not preambling responses, confirming before destructive operations, and using tools rather than guessing.
 
-### 3. Tail Stack
+---
 
-| Middleware | Condition |
-|---|---|
-| Profile `extra_middleware` | If harness profile provides extra middleware |
-| `_ToolExclusionMiddleware` | If profile has `excluded_tools` |
-| `AnthropicPromptCachingMiddleware` | Always (unconditional) |
-| `MemoryMiddleware` | If `memory` provided |
-| `HumanInTheLoopMiddleware` | If `interrupt_on` provided |
+## `BASE_AGENT_PROMPT` (constant)
 
-## Harness Profiles
+The default system prompt loaded from `default_agent_prompt.md`. Key principles it establishes:
+- Think step-by-step before acting
+- Prefer tools over assumptions
+- Report what was actually done, not what was planned
+- Ask when uncertain rather than guessing
+- Don't preamble or explain what you're about to do
 
-`_harness_profile_for_model()` returns a `_HarnessProfile` for the resolved model. A profile can supply:
-- `base_system_prompt` — replaces `BASE_AGENT_PROMPT` for that model
-- `system_prompt_suffix` — appended after the base prompt
-- `tool_description_overrides` — per-tool description text overrides
-- `extra_middleware` — additional tail-stack middleware
-- `excluded_tools` — tool names to drop from the tool list
-- `excluded_middleware` — middleware to exclude from the assembled stack (validated; raises `ValueError` if nothing matches)
+---
 
-> **Required middleware:** `FilesystemMiddleware` and `SubAgentMiddleware` cannot be excluded; attempting to do so raises `ValueError`.
+## Architecture Notes
 
-## General-Purpose Subagent Auto-Add
+**Recursion limit:** The compiled graph uses `recursion_limit=9999` to allow long agentic loops. The `--max-turns` CLI flag and agent-level `max_turns` parameter provide softer caps.
 
-Unless the harness profile disables it, or the user already provides a subagent named `"general-purpose"`, a default `general-purpose` subagent is automatically inserted. It receives the same base middleware stack (TodoList, Filesystem, Summarization, PatchToolCalls, Skills if applicable, AnthropicPromptCaching, HITL if applicable).
+**Subagent state exclusion:** When a subagent is invoked via the `task` tool, state keys like `todos`, `skills_metadata`, `memory_contents` are stripped before passing to the subagent. This prevents parent-level metadata from polluting subagent context.
 
-## System Prompt Assembly Order
+**Profile system:** Profiles add or modify middleware for specific model families. The `"openai-responses"` profile, for example, sets OpenAI Responses API defaults. Profiles are loaded from `profiles/` and applied after user middleware.
 
-1. User-supplied `system_prompt` (first)
-2. `BASE_AGENT_PROMPT` (or profile `base_system_prompt`)
-3. Profile `system_prompt_suffix` (last, if any)
+**General-purpose subagent:** Unless `add_general_purpose_subagent=False`, a general-purpose subagent is always added. It has access to all parent tools and can handle any open-ended task. Providing a subagent named `"general-purpose"` in the `subagents` list replaces the auto-added one.
 
-`str` prompts are concatenated with `"\n\n"`. `SystemMessage` objects have new text content blocks appended (preserving any existing `cache_control` markers).
+---
 
-## Dependencies
+## Usage Example
 
-- `langchain.agents.create_agent` — core agent graph builder
-- `langchain.agents.middleware.*` — `HumanInTheLoopMiddleware`, `TodoListMiddleware`, `InterruptOnConfig`
-- `langchain_anthropic.middleware.AnthropicPromptCachingMiddleware`
-- `langgraph.store.base.BaseStore`, `langgraph.cache.base.BaseCache`, `langgraph.types.Checkpointer`
-- `deepagents._models.resolve_model`
-- `deepagents.backends.*` — `StateBackend`, `BackendProtocol`, `BackendFactory`
-- `deepagents.middleware.*` — all middleware classes
-- `deepagents.middleware.filesystem.FilesystemPermission`
+```python
+from deepagents import create_deep_agent
+from deepagents.backends import FilesystemBackend
+from deepagents.middleware import MemoryMiddleware
+
+graph = create_deep_agent(
+    model="anthropic:claude-sonnet-4-6",
+    backend=FilesystemBackend(root_dir="/workspace"),
+    memory_paths=["/workspace/AGENTS.md"],
+    interrupt_on=["execute", "write_file"],
+    system_prompt_suffix="\nAlways prefer Python over shell scripts.",
+)
+
+# Invoke
+result = graph.invoke({
+    "messages": [{"role": "user", "content": "List the Python files in src/"}]
+})
+print(result["messages"][-1].content)
+```
+
+---
+
+## See Also
+
+- [_models.md](_models.md) — model resolution
+- [backends/README.md](backends/README.md) — choosing a backend
+- [middleware/README.md](middleware/README.md) — middleware stack details
+- [middleware/filesystem.md](middleware/filesystem.md) — file tools injected by FilesystemMiddleware
+- [middleware/human_in_the_loop.md](middleware/human_in_the_loop.md) — `interrupt_on` behavior

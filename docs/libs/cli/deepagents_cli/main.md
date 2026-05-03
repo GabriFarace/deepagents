@@ -1,137 +1,75 @@
-# `main.py`
+# `libs/cli/deepagents_cli/main.py`
 
 ## High-Level Purpose
 
-This is the primary entry point and CLI argument parser for `deepagents-cli`. It handles:
+`main.py` is the CLI entry point. It is the first Python code that runs when the user types `deepagents`. Its job is narrow: parse arguments, bootstrap configuration, and dispatch to one of three execution modes (interactive TUI, non-interactive headless, or ACP server). It intentionally defers heavy imports until after the fast-path checks (e.g., `--version`) complete, keeping cold-start time low.
 
-- Parsing all command-line arguments via `argparse`
-- Checking for required dependencies and optional external tools (e.g., `ripgrep`)
-- Routing to subcommands (`help`, `list`, `reset`, `skills`, `threads`)
-- Starting the Textual TUI or non-interactive mode
-- Preloading MCP server metadata for server mode
-- Performing the startup sequence (dependency checks, model resolution, server startup)
+---
 
-## Functions
+## Key Functions
 
-### `check_cli_dependencies() -> None`
+### `cli_main() → None`
 
-Checks that all required Python packages for the CLI are installed (`requests`, `python-dotenv`, `tavily-python`, `textual`). If any are missing, prints an install hint and calls `sys.exit(1)`.
+The top-level entry point registered as the `deepagents` console script in `pyproject.toml`.
 
-### `_ripgrep_install_hint() -> str`
+Execution steps:
 
-Returns a platform-appropriate install command for `ripgrep`. Detects the OS and available package managers (brew, apt-get, dnf, pacman, zypper, apk, nix-env, choco, scoop, winget, cargo, conda) and returns the most suitable install command. Falls back to the GitHub URL if no package manager is found.
+1. **Fast version check** — if `--version` is the only argument, prints the version and exits without importing any heavy dependencies.
+2. **Dependency validation** — calls `check_cli_dependencies()` which ensures optional extras (`requests`, `python-dotenv`, `tavily-python`, `textual`) are installed. Prints a helpful error and exits if any are missing.
+3. **Argument parsing** — `parse_args()` returns a `Namespace` with all CLI flags.
+4. **Stdin piping** — `apply_stdin_pipe()` converts piped stdin into a `-n` prompt so `echo "explain this" | deepagents` works without special flags.
+5. **Mode dispatch**:
+   - `-n` / `--non-interactive` → `run_non_interactive()`
+   - `--acp` → `_run_acp_cli_async()` (starts an ACP server)
+   - default → `run_textual_cli_async()`
 
-**Returns:** A platform-specific install command string or GitHub URL.
+### `run_textual_cli_async(args) → None`
 
-### `check_optional_tools(*, config_path: Path | None = None) -> list[str]`
+Sets up configuration and runs the interactive TUI.
 
-Checks for recommended but optional external tools. Currently checks for `ripgrep` (`rg`). Respects the `[warnings].suppress` list in `config.toml` to silence specific tool warnings.
+1. Resolves the model spec cheaply (no full config load) for the status bar display.
+2. Calls `apply_model_config()` to propagate model and provider settings into environment variables that the LangGraph server subprocess will inherit.
+3. Calls `run_textual_app()` from `app.py` with server kwargs (MCP preload settings, model config, thread ID for resume, etc.).
 
-**Parameters:**
-- `config_path`: Path to the config file. Defaults to `~/.deepagents/config.toml`.
+### `parse_args() → argparse.Namespace`
 
-**Returns:** A list of missing tool names (e.g., `["ripgrep"]`).
+Defines all CLI flags. Key flags:
 
-### `format_tool_warning_tui(tool: str) -> str`
-
-Formats a missing-tool warning for display in the TUI as a toast notification.
-
-**Parameters:**
-- `tool`: Name of the missing tool.
-
-**Returns:** Plain-text warning suitable for `App.notify`.
-
-### `format_tool_warning_cli(tool: str) -> str`
-
-Formats a missing-tool warning for non-interactive console output using Rich markup.
-
-**Parameters:**
-- `tool`: Name of the missing tool.
-
-**Returns:** Warning string with optional Rich link markup for URLs.
-
-### `_preload_session_mcp_server_info(*, mcp_config_path, no_mcp, trust_project_mcp) -> list[MCPServerInfo] | None`
-
-Async function that preloads MCP server metadata for the interactive TUI when running in server mode. In server mode, MCP tools are created inside the LangGraph server process, but the local Textual app needs metadata for the welcome banner and `/mcp` viewer.
-
-**Parameters:**
-- `mcp_config_path`: Optional explicit MCP config path.
-- `no_mcp`: Whether MCP loading is disabled.
-- `trust_project_mcp`: Project-level MCP trust decision.
-
-**Returns:** List of `MCPServerInfo` objects, or `None` when MCP is disabled.
-
-**Key Logic:** Opens a temporary MCP session, collects metadata, then immediately cleans up the session.
-
-### `parse_args() -> argparse.Namespace`
-
-Builds the full argument parser and parses `sys.argv`. Uses a custom `_make_help_action` factory to wire `-h` flags to Rich-formatted help screens instead of argparse's default output.
-
-**Subcommands registered:**
-- `help` — show help information
-- `list` — list available agents
-- `reset` — reset an agent (with `--agent` and optional `--target`)
-- `skills` — skill management subcommands (see `skills/commands.py`)
-- `threads` — manage conversation threads with `list`/`delete` sub-subcommands
-
-**Key flags (root parser):**
-| Flag | Description |
+| Flag | Effect |
 |---|---|
-| `-r / --resume` | Resume a thread (most recent or by ID) |
-| `-a / --agent` | Agent name to use |
-| `-M / --model` | Model spec (`provider:model` or bare name) |
-| `--model-params` | JSON object of extra model kwargs |
-| `--profile-override` | JSON object to override model profile fields |
-| `--default-model` | Set or show the default model |
-| `--clear-default-model` | Clear the persisted default model |
-| `-m / --message` | Initial prompt to auto-submit |
-| `-n / --non-interactive` | Run a single task non-interactively and exit |
-| `--max-turns N` | Maximum number of agentic turns before stopping (requires `-n` or piped stdin). Clamped to `_MAX_HITL_ITERATIONS = 50`. Exits with code 2 if used without non-interactive mode. Useful for CI/CD pipelines to prevent runaway agents. |
-| `-q / --quiet` | Clean output for piping |
-| `--no-stream` | Buffer full response before writing to stdout |
-| `-y / --auto-approve` | Auto-approve all tool calls |
-| `--sandbox` | Remote sandbox type (none/agentcore/modal/daytona/runloop/langsmith) |
-| `--sandbox-id` | Existing sandbox ID to reuse |
-| `--sandbox-setup` | Path to setup script for sandbox |
-| `-S / --shell-allow-list` | Shell commands to auto-approve |
-| `--mcp-config` | Path to MCP servers JSON config |
-| `--no-mcp` | Disable all MCP tool loading |
-| `--trust-project-mcp` | Trust project-level MCP configs |
-| `--update` | Check for and install updates |
-| `--acp` | Run as an ACP server over stdio |
-| `-v / --version` | Show version |
+| `--version` | Print version and exit |
+| `-n "prompt"` | Non-interactive mode |
+| `--acp` | Start ACP server |
+| `-r [thread_id]` | Resume a previous thread (omit ID for most recent) |
+| `--model MODEL` | Override model for this session |
+| `--mcp-config PATH` | Path to MCP config file |
+| `--shell-allow-list CMDS` | Comma-separated allowed shell commands (non-interactive) |
+| `--max-turns N` | Limit agentic loop iterations (non-interactive) |
+| `--no-stream` | Buffer full response before printing (non-interactive) |
+| `--quiet` | Print only final response to stdout; progress to stderr |
+| `--agent NAME` | Select a named agent from `~/.deepagents/agents/` |
 
-### `cli_main() -> None`
+### `apply_stdin_pipe(args) → None`
 
-The top-level entry point called by `__main__.py` and by the `deepagents` console script. Orchestrates the entire startup sequence:
+If stdin is not a TTY (e.g., piped input), reads stdin and sets `args.non_interactive = True` and `args.prompt = <stdin content>`. This normalizes the two ways of providing a non-interactive prompt.
 
-1. Calls `check_cli_dependencies()`.
-2. Calls `parse_args()`.
-3. Routes to subcommand handlers or starts the TUI/non-interactive session.
-4. Performs model resolution, agent creation, server startup, and MCP loading.
-5. Launches `DeepAgentsApp` (Textual TUI) or the non-interactive runner.
+### `_run_acp_cli_async(args) → None`
 
-## Internal Helpers
+Starts the ACP server mode. Creates a `deepagents_acp.AgentServerACP` instance and runs its async server loop. Useful for integrating the agent into external ACP-compatible clients.
 
-### `_extract_model_params_flag(raw_arg: str) -> tuple[str, dict[str, Any] | None]`
+---
 
-Parses the `--model-params` flag value from a `/model` command's raw argument string. Handles quoted (`'...'` / `"..."`), bare `{...}` JSON values with balanced braces, and simple whitespace-delimited tokens.
+## Architecture Notes
 
-**Parameters:**
-- `raw_arg`: The argument string after `/model `.
+The startup code is split across `main.py` and `config.py` deliberately. `main.py` owns argument parsing and mode dispatch. `config.py` owns the settings singleton, dotenv loading, and lazy bootstrap. The split means tests can import `config.py` without triggering argument parsing side effects.
 
-**Returns:** `(remaining_args, parsed_dict | None)`.
+The heavy Textual import (`from deepagents_cli.app import run_textual_app`) is deferred until after argument parsing, so `--version` and `--help` remain near-instant.
 
-**Raises:** `ValueError` if JSON is missing, has unclosed quotes, unbalanced braces, or is invalid JSON. `TypeError` if the JSON is not a dict.
+---
 
-## Important Imports and Dependencies
+## See Also
 
-| Import | Source | Purpose |
-|---|---|---|
-| `argparse`, `asyncio`, `json`, `os`, `sys` | stdlib | CLI parsing, async, config |
-| `shutil` | stdlib | Which-checking for external tools |
-| `DeepAgentsApp` | `deepagents_cli.app` | Textual TUI application |
-| `MCPServerInfo` | `deepagents_cli.mcp_tools` | MCP server metadata type |
-| `__version__` | `deepagents_cli._version` | Version string |
-| `add_json_output_arg` | `deepagents_cli.output` | JSON output flag helper |
-| `setup_skills_parser` | `deepagents_cli.skills` | Skills subcommand parser setup |
+- [config.md](config.md) — settings bootstrap details
+- [app.md](app.md) — what `run_textual_app()` does
+- [non_interactive.md](non_interactive.md) — headless mode
+- [server_manager.md](server_manager.md) — server startup called from app

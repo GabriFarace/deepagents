@@ -1,112 +1,54 @@
-# `deepagents/_models.py`
+# `libs/deepagents/deepagents/_models.py`
 
 ## High-Level Purpose
 
-Shared helpers for resolving and inspecting LangChain chat models, and the **Profiles API** for registering provider-specific behaviors. This module centralizes model resolution logic, providing consistent handling of model strings (e.g., `"openai:gpt-4o"`) and already-instantiated `BaseChatModel` objects. It is used by `graph.py` when setting up the main agent and subagents.
-
-## Dependencies
-
-- `langchain.chat_models.init_chat_model` — instantiates models from provider/model strings
-- `langchain_core.language_models.BaseChatModel` — base class for all LangChain chat models
-- `deepagents.profiles.provider.provider_profiles` — built-in provider profile registry
-
-## Functions
-
-### `resolve_model(model: str | BaseChatModel) -> BaseChatModel`
-
-Resolves a model identifier to a `BaseChatModel` instance.
-
-**Parameters:**
-- `model` — A `BaseChatModel` instance (returned as-is) or a provider-prefixed string like `"openai:gpt-4o"` or `"anthropic:claude-sonnet-4-6"`.
-
-**Returns:** A `BaseChatModel` instance ready for use.
-
-**Key Logic:**
-- If `model` is already a `BaseChatModel`, returns it unchanged.
-- For string specs, delegates to `init_chat_model(model)` with provider prefix resolution.
-- After initialization, calls `apply_provider_profile(model)` to compose any registered provider-specific behavior (e.g., OpenAI Responses API opt-in, custom headers).
+`_models.py` resolves model specifications (strings like `"claude-sonnet-4-6"` or `"openai:gpt-4o"`) into `BaseChatModel` instances. It handles provider-specific profile injection (e.g., setting OpenAI Responses API defaults, adding OpenRouter headers) and provides utility functions for extracting provider/identifier metadata from a model object.
 
 ---
 
-### `get_model_identifier(model: BaseChatModel) -> str | None`
+## Key Functions
 
-Extracts the provider-native model identifier string (e.g., `"gpt-4o"`, `"claude-sonnet-4-6"`) from a `BaseChatModel` instance.
+### `resolve_model(model) → BaseChatModel`
 
-**Key Logic:**
-- Tries `model.model_name` attribute first (used by Anthropic), then falls back to `model.model` attribute (used by OpenAI and others).
-- Returns the first non-empty string found, or `None`.
+The main entry point. Accepts either a string spec or an already-constructed `BaseChatModel`.
 
----
+- If `model` is already a `BaseChatModel`: returns it unchanged
+- If `model` is a string: calls `langchain.chat_models.init_chat_model(model)` then applies provider profiles
 
-### `get_model_provider(model: BaseChatModel) -> str | None`
+**String format:** `"provider:model_id"` (e.g., `"anthropic:claude-sonnet-4-6"`) or bare `"model_id"` (provider auto-detected).
 
-Extracts the provider name (e.g., `"anthropic"`, `"openai"`) from a `BaseChatModel` instance.
+**Provider profiles applied after resolution:**
 
-**Key Logic:**
-- Calls `model._get_ls_params()` and reads the `"ls_provider"` key.
-- Logs an `INFO`-level message on failure (not `DEBUG`) so profile resolution misses surface in logs without requiring verbose logging.
-
----
-
-### `model_matches_spec(model: BaseChatModel, spec: str) -> bool`
-
-Checks whether a `BaseChatModel` instance corresponds to a given model spec string.
-
-**Parameters:**
-- `model` — A `BaseChatModel` instance.
-- `spec` — A model spec string in `"provider:model-name"` format (e.g., `"openai:gpt-5"`).
-
-**Returns:** `True` if the model matches the spec, `False` otherwise.
-
-**Key Logic:**
-- Performs two match attempts:
-  1. Exact equality between `spec` and the model's current identifier.
-  2. Model-name-only match: strips the `"provider:"` prefix from `spec` and compares the remainder. For example, `"openai:gpt-5"` matches a model with identifier `"gpt-5"`.
-
----
-
-### `apply_provider_profile(model: BaseChatModel) -> BaseChatModel`
-
-Applies any registered `ProviderProfile` behaviors to the model instance.
-
-**Key Logic:**
-- Looks up the model's provider via `get_model_provider()`.
-- If a profile is registered for that provider, calls the profile's transform function (e.g., to enable `use_responses_api=True` for OpenAI, or inject custom HTTP headers for OpenRouter).
-- Returns the (possibly modified) model instance.
-
----
-
-### `register_provider_profile(provider: str, profile: ProviderProfile) -> None`
-
-Registers a custom `ProviderProfile` for a provider name.
-
-**Use case:** Extend the framework with custom provider behaviors (e.g., extra headers, API variants) without modifying core code.
-
----
-
-## Profiles API
-
-The Profiles API allows registering per-provider behaviors that are automatically applied whenever `resolve_model()` initializes a model for that provider.
-
-### Built-in Provider Profiles
-
-| Provider | Behavior |
+| Provider | Profile behavior |
 |---|---|
-| `"openai"` | Enables `use_responses_api=True` (OpenAI Responses API) |
-| `"openrouter"` | Injects app attribution headers for OpenRouter routing |
+| `openai` | Enables Responses API defaults (streaming, tool use mode) |
+| `openrouter` | Injects required `HTTP-Referer` and `X-Title` headers |
+| Others | No profile applied |
 
-### `ProviderProfile`
+### `get_model_identifier(model) → str | None`
 
-A callable (or class with `__call__`) that accepts a `BaseChatModel` and returns a (possibly modified) `BaseChatModel`. Registered via `register_provider_profile()`.
+Returns the model's string identifier by checking `model.model_name` then `model.model` attributes. Returns `None` if neither is found.
 
-**Example:**
+### `get_model_provider(model) → str | None`
 
-```python
-from deepagents._models import register_provider_profile
+Returns the provider name (e.g., `"anthropic"`, `"openai"`) by calling `model._get_ls_params()`. Logs at INFO level (not DEBUG) if `_get_ls_params()` is unavailable, so users can see when provider detection fails.
 
-def my_provider_profile(model):
-    # Add custom headers or modify model config
-    return model.bind(extra_headers={"X-Custom": "value"})
+### `model_matches_spec(model, spec) → bool`
 
-register_provider_profile("myprovider", my_provider_profile)
-```
+Returns `True` if `model` matches `spec`. Checks:
+1. Exact string equality on the model identifier
+2. `"provider:model"` suffix match (e.g., `spec="anthropic:claude-sonnet-4-6"` matches a model with provider `"anthropic"` and identifier `"claude-sonnet-4-6"`)
+
+---
+
+## Architecture Notes
+
+**Provider detection:** LangChain's `_get_ls_params()` is a private method used internally for LangSmith trace metadata. Using it for provider detection is a pragmatic choice — there's no public equivalent. The INFO-level log on failure ensures visibility without verbose debug output.
+
+**`init_chat_model` dependency:** The SDK delegates all model construction to LangChain's `init_chat_model()`. This means any LangChain-supported provider works out-of-the-box, and the SDK doesn't need to maintain its own provider registry.
+
+---
+
+## See Also
+
+- [graph.md](graph.md) — passes `model` parameter to `resolve_model()`

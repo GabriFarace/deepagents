@@ -1,119 +1,79 @@
-# `sessions.py`
+# `libs/cli/deepagents_cli/sessions.py`
 
 ## High-Level Purpose
 
-This module manages conversation thread persistence using LangGraph's SQLite checkpoint storage. It provides:
+`sessions.py` manages thread metadata for the CLI's conversation history. LangGraph handles the actual message checkpointing (via `AsyncSqliteSaver`); this module sits alongside it and stores the human-readable metadata that makes threads listable and resumable: the first prompt, the git branch, the working directory, and timestamps. The `/threads` command and `-r` flag both read from this layer.
 
-- Thread listing with filtering, sorting, and pagination
-- Thread deletion
-- Thread metadata extraction (initial prompt, message count, git branch, timestamps)
-- A UUID7-based thread ID generator
-- Timestamp formatting utilities
-- An aiosqlite compatibility patch for newer langgraph-checkpoint versions
+---
 
-## Key Design
+## Key Classes and Functions
 
-Threads are stored in a SQLite database (typically `~/.deepagents/checkpoints.db`) via LangGraph's `AsyncSqliteSaver`. The module reads checkpoint data directly to extract metadata such as message counts and initial prompts, using an in-process caching layer to avoid repeated database reads.
+### `ThreadMetadata` (TypedDict)
 
-## Module-Level State
-
-| Variable | Description |
-|---|---|
-| `_aiosqlite_patched` | Whether the `is_alive()` compatibility patch has been applied |
-| `_jsonplus_serializer` | Cached `JsonPlusSerializer` for deserializing checkpoint data |
-| `_message_count_cache` | LRU-like cache mapping `(thread_id, checkpoint_id)` to message count |
-| `_initial_prompt_cache` | LRU-like cache mapping `(thread_id, checkpoint_id)` to initial prompt |
-| `_recent_threads_cache` | Cache for recently listed threads |
-
-## Classes
-
-### `ThreadInfo`
-
-**Type:** `TypedDict`
-
-Thread metadata returned by `list_threads`.
-
-| Key | Type | Description |
-|---|---|---|
-| `thread_id` | `str` | Unique identifier for the thread |
-| `agent_name` | `str \| None` | Name of the agent that owns the thread |
-| `updated_at` | `str \| None` | ISO timestamp of last update |
-| `created_at` | `NotRequired[str \| None]` | ISO timestamp of thread creation |
-| `git_branch` | `NotRequired[str \| None]` | Git branch active when created |
-| `initial_prompt` | `NotRequired[str \| None]` | First human message in the thread |
-| `message_count` | `NotRequired[int]` | Number of messages in the thread |
-| `latest_checkpoint_id` | `NotRequired[str \| None]` | Most recent checkpoint ID |
-| `cwd` | `NotRequired[str \| None]` | Working directory when last used |
-
-### `_CheckpointSummary`
-
-**Type:** `NamedTuple`
-
-Structured data extracted from a thread's latest checkpoint.
+The per-thread record stored in the metadata table.
 
 | Field | Type | Description |
 |---|---|---|
-| `message_count` | `int` | Number of messages in the latest checkpoint |
-| `initial_prompt` | `str \| None` | First human prompt from the checkpoint |
+| `thread_id` | `str` | UUID hex, 32 chars |
+| `agent_name` | `str \| None` | Which agent was active |
+| `created_at` | `str` | ISO 8601 timestamp |
+| `updated_at` | `str` | ISO 8601 timestamp |
+| `git_branch` | `str \| None` | Git branch active when thread was created |
+| `cwd` | `str` | Working directory at thread creation |
+| `initial_prompt` | `str` | First human message (truncated to 120 chars) |
 
-## Functions
+### `SessionStore`
 
-### `_patch_aiosqlite() -> None`
+Async manager for the thread metadata SQLite table. Stored at `~/.deepagents/.state/threads_meta.db` (separate from LangGraph's own checkpoint DB to avoid schema conflicts).
 
-Patches `aiosqlite.Connection` with an `is_alive()` method if it's missing, which is required by `langgraph-checkpoint>=2.1.0`.
+**Key methods:**
 
-### `_connect() -> AsyncIterator[aiosqlite.Connection]`
+#### `async create_thread(thread_id, agent_name, initial_prompt) → ThreadMetadata`
 
-Async context manager that applies the compatibility patch and opens a connection to the sessions database.
+Inserts a new thread record. Reads `git_branch` and `cwd` from the process environment at call time. Returns the created `ThreadMetadata`.
 
-### `format_timestamp(iso_timestamp: str | None) -> str`
+#### `async update_thread(thread_id, **kwargs) → None`
 
-Formats an ISO 8601 timestamp for human-readable display (e.g., `"Dec 30, 6:10pm"`).
+Updates `updated_at` and any other provided fields. Called after each agent response.
 
-**Returns:** Formatted timestamp string, or empty string if invalid/None.
+#### `async list_threads(agent_name=None, limit=20, sort="updated") → list[ThreadMetadata]`
 
-### `generate_thread_id() -> str`
+Returns recent threads, optionally filtered by `agent_name`. Sort can be `"updated"` (most recently active first) or `"created"` (newest first).
 
-Generates a UUID7 thread ID using `uuid_utils`.
+#### `async get_thread(thread_id) → ThreadMetadata | None`
 
-**Returns:** UUID7 string suitable as a LangGraph thread ID.
+Returns a single thread record by ID. Returns `None` if not found.
 
-### `get_db_path() -> Path`
+#### `async get_most_recent(agent_name=None) → ThreadMetadata | None`
 
-Returns the path to the SQLite checkpoint database.
+Returns the most recently updated thread, optionally filtered by agent. Used by `-r` without an explicit thread ID.
 
-**Returns:** Path to `~/.deepagents/checkpoints.db` (or the path configured in settings).
+---
 
-### `list_threads(*, agent_name=None, limit=20, sort="updated", branch=None, verbose=False, relative_time=False, output_format="text") -> list[ThreadInfo]`
+## Resume Flow
 
-Queries the checkpoint database and returns recent thread metadata.
+When the user runs `deepagents -r` (or `deepagents -r <thread_id>`):
 
-**Parameters:**
-- `agent_name`: Filter by agent name.
-- `limit`: Maximum number of threads to return (default 20).
-- `sort`: Sort key — `"updated"` or `"created"`.
-- `branch`: Filter by git branch name.
-- `verbose`: Include all columns (branch, created, prompt).
-- `relative_time`: Show timestamps as relative time.
-- `output_format`: `"text"` or `"json"`.
+1. `main.py::parse_args()` captures `args.resume` (may be `True` or a string ID)
+2. `run_textual_cli_async()` passes `resume_thread_id` to `run_textual_app()`
+3. `CLIApp._start_server()` calls `session_store.get_most_recent()` (if `resume=True`) or `session_store.get_thread(id)` (if an ID was given)
+4. The resolved `thread_id` is passed to `RemoteAgent.astream()` — LangGraph picks up the checkpoint automatically
 
-**Returns:** List of `ThreadInfo` dicts.
+---
 
-### `delete_thread(thread_id: str) -> bool`
+## Architecture Notes
 
-Deletes all checkpoints for a thread from the database.
+**Two databases:** LangGraph's `AsyncSqliteSaver` stores the full message/state checkpoints in `threads.db`. `SessionStore` stores only human-readable metadata in `threads_meta.db`. This separation means the metadata table stays small and fast to query for listing, while the checkpoint table can be large.
 
-**Returns:** `True` if the thread existed and was deleted, `False` if not found.
+**thread_id format:** Generated as `uuid.uuid4().hex` (32-char lowercase hex, no hyphens). LangGraph accepts any string as a thread_id.
 
-### `get_or_create_checkpointer() -> AsyncIterator[AsyncSqliteSaver]`
+**`updated_at` maintenance:** The TUI calls `session_store.update_thread()` after every successful agent response, so the "most recently active" sort order stays accurate.
 
-Async context manager that yields an `AsyncSqliteSaver` connected to the sessions database.
+---
 
-## Important Imports and Dependencies
+## See Also
 
-| Import | Source | Purpose |
-|---|---|---|
-| `aiosqlite` | `aiosqlite` | Async SQLite access |
-| `langgraph.checkpoint.sqlite.aio.AsyncSqliteSaver` | `langgraph-checkpoint-sqlite` | Checkpoint persistence |
-| `langgraph.checkpoint.serde.jsonplus.JsonPlusSerializer` | langgraph | Checkpoint deserialization |
-| `uuid_utils` | `uuid-utils` | UUID7 generation |
+- [app.md](app.md) — where `create_thread()` and `update_thread()` are called
+- [main.md](main.md) — `-r` flag parsing
+- [command_registry.md](command_registry.md) — `/threads` slash command
+- [widgets/thread_selector.md](widgets/README.md) — the `/threads` modal

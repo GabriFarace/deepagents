@@ -1,85 +1,80 @@
-# `agent.py`
+# `libs/cli/deepagents_cli/agent.py`
 
 ## High-Level Purpose
 
-This module handles agent management and creation for the CLI. It is responsible for:
+`agent.py` contains `create_cli_agent()`, the function that assembles the agent graph for the CLI's LangGraph server. It is the CLI-specific analogue of `create_deep_agent()` in the SDK — it calls `create_deep_agent()` but wraps it with CLI-specific middleware, tools, interrupt configuration, and local-shell backend setup. This is where the agent's capabilities and safety guardrails are decided.
 
-- Loading async subagent definitions from `config.toml`
-- Listing available agents from the user's `~/.deepagents/` directory
-- Resetting agents (clearing their prompt/state)
-- Creating the main LangGraph agent with all middleware applied
+---
 
-The agent creation process wires together models, backends, MCP tools, subagents, skills, memory, HITL, unicode security, and sandbox integrations.
+## Key Function
 
-## Module-Level Constants
+### `create_cli_agent(config, mcp_tools, subagents) → CompiledStateGraph`
 
-| Constant | Type | Description |
-|---|---|---|
-| `DEFAULT_AGENT_NAME` | `str` | `"agent"` — default agent used when no `-a` flag is provided |
-| `REQUIRE_COMPACT_TOOL_APPROVAL` | `bool` | `True` — `compact_conversation` requires HITL approval |
-
-## Functions
-
-### `load_async_subagents(config_path: Path | None = None) -> list[AsyncSubAgent]`
-
-Loads async subagent definitions from `config.toml`'s `[async_subagents]` section. Each sub-table defines a remote LangGraph deployment.
-
-**Example config:**
-```toml
-[async_subagents.researcher]
-description = "Research agent"
-url = "https://my-deployment.langsmith.dev"
-graph_id = "agent"
-```
+Builds and returns the compiled agent graph. Called from `server_graph.py::make_graph()`.
 
 **Parameters:**
-- `config_path`: Path to config file. Defaults to `~/.deepagents/config.toml`.
 
-**Returns:** List of `AsyncSubAgent` specs. Returns empty list if section is absent, missing, or invalid.
-
-**Required fields per entry:** `description`, `graph_id`.
-**Optional fields:** `url`, `headers`.
-
-### `get_available_agent_names() -> list[str]`
-
-Returns a sorted list of available agent names by scanning `~/.deepagents/` for real subdirectories. Symlinks are excluded so dangling links do not masquerade as agents. Filesystem errors (missing parent, permission denied, broken entries) are logged and surfaced as an empty list rather than raised — callers show an empty modal instead of crashing.
-
-**Returns:** Sorted list of agent name strings. Empty when no agents exist or the directory is unreadable.
-
-### `list_agents(*, output_format: OutputFormat = "text") -> None`
-
-Lists all available agents found in `settings.user_deepagents_dir`. Prints a Rich table or JSON output.
-
-**Parameters:**
-- `output_format`: `'text'` for Rich console output, `'json'` for machine-readable JSON.
-
-### `create_agent(...) -> Pregel`
-
-The main agent factory. Creates a fully configured LangGraph agent with all CLI middleware layers applied.
-
-**Key steps:**
-1. Resolves the backend (local, sandbox, or remote).
-2. Creates the LLM model via `create_model`.
-3. Loads MCP tools via `resolve_and_load_mcp_tools`.
-4. Loads subagents and async subagents.
-5. Loads skills.
-6. Builds `CompositeBackend` with local shell, filesystem, and optional sandbox backends.
-7. Wraps the agent with middleware: `MemoryMiddleware`, `SkillsMiddleware`, `ConfigurableModelMiddleware`, `LocalContextMiddleware`.
-8. Applies unicode security hooks.
-9. Compiles and returns the LangGraph `Pregel` graph.
-
-## Important Imports and Dependencies
-
-| Import | Source | Purpose |
+| Parameter | Type | Purpose |
 |---|---|---|
-| `create_deep_agent` | `deepagents` | Core agent factory |
-| `CompositeBackend`, `LocalShellBackend` | `deepagents.backends` | Execution backends |
-| `FilesystemBackend` | `deepagents.backends.filesystem` | File system access |
-| `MemoryMiddleware`, `SkillsMiddleware` | `deepagents.middleware` | Agent middleware |
-| `config`, `console`, `settings` | `deepagents_cli.config` | App configuration |
-| `ConfigurableModelMiddleware` | `deepagents_cli.configurable_model` | Model switching middleware |
-| `get_default_working_dir` | `deepagents_cli.integrations.sandbox_factory` | Sandbox working dir |
-| `LocalContextMiddleware` | `deepagents_cli.local_context` | Local execution context |
-| `ProjectContext` | `deepagents_cli.project_utils` | Project context detection |
-| `list_subagents` | `deepagents_cli.subagents` | Custom subagent loader |
-| `detect_dangerous_unicode`, etc. | `deepagents_cli.unicode_security` | Security checks |
+| `config` | `ServerConfig` | Server configuration (model, auto_approve, etc.) |
+| `mcp_tools` | `list[BaseTool]` | Pre-loaded MCP tool objects |
+| `subagents` | `list[SubAgent]` | Subagent specs from YAML files |
+
+**Steps:**
+
+1. **Backend selection** — always uses `LocalShellBackend` (disk + local shell). This gives the agent full filesystem and shell access on the user's machine. For sandboxed deployments, a partner backend would be used instead.
+
+2. **Tool assembly** — combines:
+   - `fetch_url` — fetches a URL and converts HTML to Markdown (from `tools.py`)
+   - `web_search` — Tavily web search (from `tools.py`, only added if `TAVILY_API_KEY` is set)
+   - MCP tools — passed in from `mcp_tools` parameter
+
+3. **Interrupt configuration** — determines which tool calls require HITL approval:
+   - If `auto_approve=True` or `interrupt_shell_only=True`: no interrupts (agent runs headless)
+   - Default: interrupts on `execute`, `write_file`, `edit_file`, `web_search`, `fetch_url`, `task`, `start_async_task`
+
+4. **Middleware assembly** — adds CLI-specific middleware layers (see below)
+
+5. **Calls `create_deep_agent()`** — passes all of the above to the SDK factory. Returns the compiled graph.
+
+---
+
+## Middleware Stack (CLI-specific additions)
+
+Beyond the default SDK middleware, the CLI agent adds:
+
+| Middleware | Purpose |
+|---|---|
+| `ConfigurableModelMiddleware` | Allows mid-session model switching via `/model` command |
+| `TokenStateMiddleware` | Tracks context window usage; feeds the status bar token counter |
+| `AskUserMiddleware` | Enables the agent to call `ask_user()` — pauses execution and prompts the user for input |
+| `LocalContextMiddleware` | Injects git branch, project root, and directory tree into the system prompt |
+| `SkillsMiddleware` | Loads skills from `~/.deepagents/{agent}/skills/` and project `.deepagents/skills/` |
+| `MemoryMiddleware` | Loads `AGENTS.md` from `~/.deepagents/{agent}/AGENTS.md` |
+| `ShellAllowListMiddleware` | Validates shell commands against the allow-list (used in non-interactive mode) |
+| `SummarizationMiddleware` | Compacts conversation history when token usage is high |
+
+---
+
+## `load_async_subagents(config) → list[AsyncSubAgent]`
+
+Reads `[async_subagents]` entries from `~/.deepagents/config.toml`. Each entry specifies a remote LangGraph deployment (graph_id, url, headers) that the agent can invoke asynchronously via `start_async_task`.
+
+---
+
+## Architecture Notes
+
+**LocalShellBackend choice:** The CLI runs on the user's own machine with their own permissions. There is no sandbox. The HITL interrupt system is the primary safety mechanism — the user reviews and approves shell commands and file writes before they execute.
+
+**AskUserMiddleware:** This middleware adds an `ask_user(question)` tool to the agent's tool list. When the agent calls it, the CLI pauses execution and shows `AskUserMenu` in the TUI. The user's response is returned as a `ToolMessage` and execution continues. This avoids the agent making uninformed decisions or silently failing on ambiguous requests.
+
+**ConfigurableModelMiddleware:** Adds a `configurable` field to the LangGraph state that the `/model` command can update. On the next model call, the middleware swaps in the new model. This enables mid-session model changes without restarting the server.
+
+---
+
+## See Also
+
+- [server_graph.md](server_graph.md) — calls `create_cli_agent()`
+- [tools.md](tools.md) — `fetch_url` and `web_search` definitions
+- [mcp_tools.md](mcp_tools.md) — how MCP tools are loaded before being passed here
+- [../../deepagents/deepagents/graph.md](../../deepagents/deepagents/graph.md) — the SDK `create_deep_agent()` called here

@@ -2,125 +2,65 @@
 
 ## High-Level Purpose
 
-This module provides automatic and on-demand conversation compaction. When the conversation context fills up (measured in tokens, messages, or fraction of model context), older messages are summarized via an LLM call and the full history is offloaded to the backend for later retrieval. This prevents context overflow errors and reduces API costs.
+`SummarizationMiddleware` automatically compacts conversation history when the context window fills up. It replaces old messages with an LLM-generated summary, stores the summary in the backend, and re-injects it at the start of every subsequent model call. This lets agents run indefinitely long sessions without hitting token limits.
 
-Two middleware classes plus a factory:
-- **`SummarizationMiddleware`** — Automatic compaction triggered by a threshold.
-- **`SummarizationToolMiddleware`** — Exposes a `compact_conversation` tool for manual triggering.
-- **`create_summarization_middleware`** — Internal factory used by `create_deep_agent`.
+---
 
-## Key Types
+## Key Classes
 
-### `ContextSize` (from `langchain.agents.middleware.summarization`)
-A union type specifying a compaction threshold:
-- `("tokens", int)` — Trigger when conversation exceeds N tokens
-- `("messages", int)` — Trigger when conversation exceeds N messages
-- `("fraction", float)` — Trigger when conversation uses this fraction of model's context window
+### `SummarizationMiddleware(AgentMiddleware)`
 
-### `SummarizationEvent`
-TypedDict capturing a single summarization occurrence.
+**Constructor parameters:**
 
-| Field | Type | Description |
-|---|---|---|
-| `cutoff_index` | `int` | Index in messages where compaction occurred |
-| `summary_message` | `HumanMessage` | The generated summary |
-| `file_path` | `str \| None` | Path where history was offloaded, or None on failure |
-
-### `TruncateArgsSettings`
-Settings for the pre-summarization optimization that truncates large tool-call arguments in old messages (lighter than full summarization).
-
-| Field | Type | Default | Description |
+| Parameter | Type | Default | Description |
 |---|---|---|---|
-| `trigger` | `ContextSize \| None` | — | When to activate argument truncation |
-| `keep` | `ContextSize` | — | How many recent messages to leave intact |
-| `max_length` | `int` | — | Max chars per argument before clipping |
-| `truncation_text` | `str` | — | Replacement suffix after truncation |
+| `trigger_fraction` | `float` | `0.85` | Compact when token usage exceeds this fraction of context window |
+| `keep_fraction` | `float` | `0.10` | Keep this fraction of tokens (most recent messages) after compaction |
+| `summary_storage_path` | `str` | `"/conversation_history/{thread_id}.md"` | Path to write summaries |
+| `backend` | `BackendProtocol` | required | Backend used to store summaries |
+| `model` | `BaseChatModel \| None` | `None` | Model used to generate summary (defaults to agent's model) |
 
-### `SummarizationState(AgentState)`
-State schema with `_summarization_event: PrivateStateAttr` storing the most recent compaction event.
+### `SummarizationToolMiddleware(AgentMiddleware)`
 
-### `SummarizationDefaults`
-TypedDict returned by `compute_summarization_defaults`.
+Exposes a `compact_conversation` tool that the agent (or user via `/compact`) can call explicitly, without waiting for the automatic threshold. Useful for proactively managing context before a long task.
 
-## Functions
+### `create_summarization_middleware(backend, **kwargs) → SummarizationMiddleware`
 
-### `compute_summarization_defaults(model: BaseChatModel) -> SummarizationDefaults`
+Convenience factory with sensible defaults.
 
-Computes default thresholds based on the model's profile.
+---
 
-**Returns:**
-- If the model has `profile.max_input_tokens`: fraction-based settings (trigger at 85%, keep 10%).
-- Otherwise: conservative fixed settings (trigger at 170K tokens or 20 messages; keep 6 messages).
+## Compaction Process
 
-### `create_summarization_middleware(model, backend) -> SummarizationMiddleware`
+When triggered:
 
-Convenience factory used internally by `create_deep_agent`. Creates a `SummarizationMiddleware` instance with model-aware defaults.
+1. **Identify old messages** — everything except the `keep_fraction` most recent messages
+2. **Generate summary** — calls the LLM with the old messages and prompt: "Summarize this conversation history preserving all important facts, decisions, and context"
+3. **Store summary** — writes to `summary_storage_path` (replacing any previous summary)
+4. **Update state** — replaces old messages with a single `SystemMessage` containing a pointer to the summary and the summary text itself
+5. **Log event** — adds a compaction event to state metadata (visible in trace)
 
-## Class: `SummarizationMiddleware`
+On each subsequent model call, the summary is injected at the top of the system prompt.
 
-Extends `langchain.agents.middleware.summarization.SummarizationMiddleware` (from LangChain) with backend-backed history offloading.
+---
 
-### Constructor
+## Token Counting
 
-```python
-SummarizationMiddleware(
-    model: str | BaseChatModel,
-    backend: BACKEND_TYPES,
-    trigger: ContextSize | None = None,
-    keep: ContextSize | None = None,
-    summary_prompt: str = DEFAULT_SUMMARY_PROMPT,
-    truncate_args_settings: TruncateArgsSettings | None = None,
-)
-```
+Uses LangChain's `count_tokens_approximately()`. This is model-agnostic and not perfectly precise, but accurate enough to trigger compaction before the model hits its limit.
 
-**Parameters:**
-- `model` — LLM used to generate summaries (may differ from the main agent model).
-- `backend` — Storage backend for offloading conversation history.
-- `trigger` — When to trigger compaction. Defaults to model-aware values.
-- `keep` — How much of the recent context to retain after compaction. Defaults to model-aware values.
-- `summary_prompt` — Prompt template for summarization.
-- `truncate_args_settings` — Settings for argument pre-truncation.
+The trigger is checked at the start of each model call (via `wrap_model_call()`). If usage is below threshold, the middleware is a no-op.
 
-### Behavior
+---
 
-When the conversation exceeds the `trigger` threshold:
-1. Generates a summary of the messages that will be evicted.
-2. Offloads the evicted messages to `backend.write()` at `/conversation_history/{thread_id}.md`.
-3. Replaces the conversation history with the summary message and the retained recent messages.
-4. Records a `SummarizationEvent` in private state.
+## Architecture Notes
 
-## Class: `SummarizationToolMiddleware`
+**Why store the summary externally?** The summary file at `/conversation_history/{thread_id}.md` persists across sessions. If the agent resumes a thread after a long gap, the previous summary is still accessible even if the LangGraph state was reset.
 
-Wraps a `SummarizationMiddleware` instance and exposes a `compact_conversation` tool that triggers manual compaction.
+**Summary quality:** The quality of compaction depends on the LLM. Using a weaker/faster model for summarization (via the `model` parameter) is a common optimization — summaries don't need frontier-level intelligence.
 
-### Constructor
+---
 
-```python
-SummarizationToolMiddleware(summarization_middleware: SummarizationMiddleware)
-```
+## See Also
 
-### System Prompt
-
-`SUMMARIZATION_SYSTEM_PROMPT` is injected when this middleware is active. It tells the agent to use `compact_conversation` when:
-- The user moves to a completely new task.
-- Previous working context is no longer needed.
-
-### `wrap_model_call` / `awrap_model_call`
-Adds `compact_conversation` tool to the request and injects the system prompt.
-
-## Storage
-
-Offloaded messages are stored as Markdown at:
-```
-/conversation_history/{thread_id}.md
-```
-Each summarization event appends a new section, creating a running log.
-
-## Dependencies
-
-- `langchain.agents.middleware.summarization` — base class and types
-- `langchain_core.messages` — message types
-- `langchain_core.exceptions.ContextOverflowError`
-- `langgraph.config.get_config`
-- `deepagents.middleware._utils.append_to_system_message`
-- `deepagents.backends.protocol` — `BACKEND_TYPES`
+- [README.md](README.md) — middleware stack
+- [../graph.md](../graph.md) — passes `backend` to this middleware indirectly

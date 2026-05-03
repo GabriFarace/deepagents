@@ -1,37 +1,75 @@
-# deepagents — Documentation Index
+# deepagents — Documentation Hub
 
-> Auto-generated documentation for the deepagents monorepo.
-> Each file in `docs/` mirrors the source file it documents, maintaining the same directory hierarchy.
+deepagents is an open-source, provider-agnostic AI agent framework built on [LangGraph](https://github.com/langchain-ai/langgraph). It ships a Python SDK (`deepagents`), a batteries-included CLI (`deepagents-cli`) with a Textual TUI, an ACP server adapter, and an evaluation suite.
 
-## What is deepagents?
-
-**deepagents** is an open-source, batteries-included AI agent framework built on [LangGraph](https://github.com/langchain-ai/langgraph). It provides:
-
-- A Python SDK (`deepagents`) for building LLM agents with file access, shell execution, memory, skills, and subagents
-- An interactive TUI CLI (`deepagents-cli`) for using those agents from the terminal
-- An ACP protocol adapter (`deepagents-acp`) for remote/embedded use
-- A benchmark suite (`deepagents-evals`) for quality measurement
-- Pluggable sandbox integrations for Modal, Daytona, Runloop, and QuickJS
-
-**Think of it as a Claude Code-inspired, open-source, provider-agnostic agent harness.**
+**New here? Start with [ROADMAP.md](ROADMAP.md)** — a dependency-ordered learning path from orientation to advanced topics.
 
 ---
 
-## Documentation Structure
+## Directory Tree
 
 ```
 docs/
-├── README.md                    ← You are here
-├── ROADMAP.md                   ← Learning roadmap (start here!)
+├── README.md                    ← this file (navigation hub)
+├── ROADMAP.md                   ← ordered learning path
 ├── libs/
-│   ├── README.md                ← Overview of all library packages
-│   ├── deepagents/              ← Core SDK documentation
-│   ├── cli/                     ← CLI tool documentation
-│   ├── acp/                     ← ACP adapter documentation
-│   ├── evals/                   ← Evaluation suite documentation
-│   └── partners/                ← Sandbox provider documentation
-├── examples/                    ← Example agent documentation
-└── devops/                      ← CI/CD and DevOps documentation
+│   ├── README.md                ← package dependency graph & selection guide
+│   ├── deepagents/              ← Core SDK
+│   │   └── deepagents/
+│   │       ├── README.md
+│   │       ├── graph.md         ← create_deep_agent() — main entry point
+│   │       ├── _models.md       ← model resolution
+│   │       ├── backends/
+│   │       │   ├── README.md    ← backend selection guide
+│   │       │   ├── protocol.md  ← BackendProtocol interface
+│   │       │   ├── state.md
+│   │       │   ├── filesystem.md
+│   │       │   ├── store.md
+│   │       │   ├── composite.md
+│   │       │   ├── sandbox.md
+│   │       │   └── local_shell.md
+│   │       └── middleware/
+│   │           ├── README.md    ← middleware stack & ordering
+│   │           ├── filesystem.md
+│   │           ├── skills.md
+│   │           ├── memory.md
+│   │           ├── subagents.md
+│   │           ├── async_subagents.md
+│   │           ├── summarization.md
+│   │           └── human_in_the_loop.md
+│   ├── cli/                     ← deepagents-cli (TUI + LangGraph server)
+│   │   └── deepagents_cli/
+│   │       ├── README.md        ← CLI architecture overview
+│   │       ├── main.md          ← entry point & startup flow
+│   │       ├── app.md           ← Textual TUI App
+│   │       ├── agent.md         ← agent factory for CLI
+│   │       ├── server.md        ← LangGraph server process
+│   │       ├── server_manager.md
+│   │       ├── server_graph.md  ← graph wiring inside server
+│   │       ├── remote_client.md ← HTTP+SSE client
+│   │       ├── sessions.md      ← thread persistence
+│   │       ├── mcp_tools.md     ← MCP tool loading
+│   │       ├── command_registry.md ← slash commands
+│   │       ├── hooks.md         ← lifecycle hooks
+│   │       ├── config.md        ← settings & config file
+│   │       ├── non_interactive.md
+│   │       ├── subagents.md
+│   │       ├── tools.md
+│   │       ├── input.md
+│   │       └── widgets/
+│   │           ├── README.md
+│   │           ├── chat_input.md
+│   │           ├── messages.md
+│   │           ├── message_store.md
+│   │           ├── approval.md
+│   │           ├── status.md
+│   │           └── welcome.md
+│   ├── acp/
+│   │   └── README.md            ← ACP bridge
+│   └── evals/
+│       └── README.md            ← evaluation suite
+└── examples/
+    └── README.md                ← example agents
 ```
 
 ---
@@ -40,49 +78,34 @@ docs/
 
 ### By Layer (top to bottom)
 
-| Layer | Package | Docs |
-|---|---|---|
-| User Interface | `deepagents-cli` | [docs/libs/cli/README.md](libs/cli/README.md) |
-| Protocol Adapter | `deepagents-acp` | [docs/libs/acp/README.md](libs/acp/README.md) |
-| Core SDK | `deepagents` | [docs/libs/deepagents/README.md](libs/deepagents/README.md) |
-| Backends | SDK backends + partners | [docs/libs/deepagents/deepagents/backends/README.md](libs/deepagents/deepagents/backends/README.md) |
-| Middleware | SDK middleware | [docs/libs/deepagents/deepagents/middleware/README.md](libs/deepagents/deepagents/middleware/README.md) |
-| Sandboxes | Partner packages | [docs/libs/partners/README.md](libs/partners/README.md) |
-| Evaluation | `deepagents-evals` | [docs/libs/evals/README.md](libs/evals/README.md) |
-| Examples | `examples/` | [docs/examples/README.md](examples/README.md) |
-| DevOps | CI/CD | [docs/devops/README.md](devops/README.md) |
+| Layer | What to read |
+|---|---|
+| User entry point (CLI) | [main.md](libs/cli/deepagents_cli/main.md) |
+| TUI rendering | [app.md](libs/cli/deepagents_cli/app.md), [widgets/README.md](libs/cli/deepagents_cli/widgets/README.md) |
+| Server lifecycle | [server_manager.md](libs/cli/deepagents_cli/server_manager.md), [server.md](libs/cli/deepagents_cli/server.md) |
+| Agent wiring | [agent.md](libs/cli/deepagents_cli/agent.md), [server_graph.md](libs/cli/deepagents_cli/server_graph.md) |
+| LangGraph comms | [remote_client.md](libs/cli/deepagents_cli/remote_client.md) |
+| SDK core | [graph.md](libs/deepagents/deepagents/graph.md) |
+| Middleware pipeline | [middleware/README.md](libs/deepagents/deepagents/middleware/README.md) |
+| File/shell access | [middleware/filesystem.md](libs/deepagents/deepagents/middleware/filesystem.md) |
+| Storage backends | [backends/README.md](libs/deepagents/deepagents/backends/README.md) |
+| External tooling (MCP) | [mcp_tools.md](libs/cli/deepagents_cli/mcp_tools.md) |
+| ACP protocol | [acp/README.md](libs/acp/README.md) |
 
 ### By Concept
 
-| Concept | Where to Look |
+| Question | Where to look |
 |---|---|
-| Creating your first agent | [deepagents/graph.md](libs/deepagents/deepagents/graph.md) |
-| Backends (file/shell access) | [deepagents/backends/README.md](libs/deepagents/deepagents/backends/README.md) |
-| Middleware (extending agents) | [deepagents/middleware/README.md](libs/deepagents/deepagents/middleware/README.md) |
-| Subagents | [deepagents/middleware/subagents.md](libs/deepagents/deepagents/middleware/subagents.md) |
-| Skills (reusable workflows) | [deepagents/middleware/skills.md](libs/deepagents/deepagents/middleware/skills.md) |
-| Memory (AGENTS.md) | [deepagents/middleware/memory.md](libs/deepagents/deepagents/middleware/memory.md) |
-| TUI Application | [cli/deepagents_cli/app.md](libs/cli/deepagents_cli/app.md) |
-| Model configuration | [cli/deepagents_cli/model_config.md](libs/cli/deepagents_cli/model_config.md) |
-| MCP tools | [cli/deepagents_cli/mcp_tools.md](libs/cli/deepagents_cli/mcp_tools.md) |
-| Human-in-the-loop | [cli/deepagents_cli/widgets/approval.md](libs/cli/deepagents_cli/widgets/approval.md) |
-| ACP protocol | [acp/deepagents_acp/server.md](libs/acp/deepagents_acp/server.md) |
-| CI/CD pipeline | [devops/github-workflows/ci.md](devops/github-workflows/ci.md) |
-| Release process | [devops/github-workflows/release.md](devops/github-workflows/release.md) |
-
----
-
-## Key Design Principles
-
-1. **Provider-agnostic** — Works with any LangChain-supported LLM (Anthropic, OpenAI, Google, Ollama, etc.)
-2. **Uniform backend protocol** — All storage accessed via `BackendProtocol`, making middleware storage-agnostic
-3. **Middleware for extensibility** — New capabilities added as middleware, not by modifying the core graph
-4. **Subagent isolation** — Sub-agents share filesystem state but have independent message histories
-5. **Progressive disclosure for skills** — Skill metadata always visible; full instructions read on demand
-6. **Batteries included** — The CLI ships with everything needed for a full coding assistant experience
-
----
-
-## Learning Path
-
-See **[ROADMAP.md](ROADMAP.md)** for a structured guide on how to learn this codebase from the ground up.
+| How does the CLI start up? | [main.md](libs/cli/deepagents_cli/main.md) → [server_manager.md](libs/cli/deepagents_cli/server_manager.md) |
+| How does a message go from user to agent and back? | [app.md](libs/cli/deepagents_cli/app.md) → [remote_client.md](libs/cli/deepagents_cli/remote_client.md) |
+| How do slash commands work? | [command_registry.md](libs/cli/deepagents_cli/command_registry.md) |
+| How are MCP tools loaded? | [mcp_tools.md](libs/cli/deepagents_cli/mcp_tools.md) |
+| How does session persistence work? | [sessions.md](libs/cli/deepagents_cli/sessions.md) |
+| How do HITL approvals work? | [widgets/approval.md](libs/cli/deepagents_cli/widgets/approval.md), [middleware/human_in_the_loop.md](libs/deepagents/deepagents/middleware/human_in_the_loop.md) |
+| How do hooks work? | [hooks.md](libs/cli/deepagents_cli/hooks.md) |
+| How do custom skills work? | [middleware/skills.md](libs/deepagents/deepagents/middleware/skills.md) |
+| How is the agent assembled? | [graph.md](libs/deepagents/deepagents/graph.md) |
+| What backend should I use? | [backends/README.md](libs/deepagents/deepagents/backends/README.md) |
+| How does context compaction work? | [middleware/summarization.md](libs/deepagents/deepagents/middleware/summarization.md) |
+| How do subagents work? | [middleware/subagents.md](libs/deepagents/deepagents/middleware/subagents.md) |
+| How does non-interactive mode work? | [non_interactive.md](libs/cli/deepagents_cli/non_interactive.md) |

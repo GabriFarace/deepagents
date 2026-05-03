@@ -1,93 +1,71 @@
-# `subagents.py`
+# `libs/cli/deepagents_cli/subagents.py`
 
 ## High-Level Purpose
 
-This module loads custom subagent definitions from the filesystem. Subagents are defined as Markdown files with YAML frontmatter in an `agents/` directory structure. They allow users to extend the main agent with specialized sub-agents that can be delegated tasks.
+`subagents.py` loads custom subagent definitions from the user's agent directory (`~/.deepagents/{agent_name}/agents/`). Each subagent is a Markdown file with YAML frontmatter. This module parses those files into `SubAgent` TypedDicts that are passed to `create_cli_agent()`, enabling the agent to delegate tasks to specialized sub-agents.
 
-## Directory Structure
+---
 
-```
-~/.deepagents/agents/{subagent_name}/AGENTS.md   (user-level)
-.deepagents/agents/{subagent_name}/AGENTS.md      (project-level)
-```
+## Key Function
 
-## File Format
+### `load_subagents(agent_name=None) → list[SubAgent]`
+
+Scans `~/.deepagents/{agent_name}/agents/` (or `~/.deepagents/agents/` if no agent name) for `*.md` files. Parses each as a subagent definition and returns the list.
+
+Returns `[]` if the directory doesn't exist.
+
+---
+
+## Subagent File Format
+
+Each file in `agents/` is a Markdown file with YAML frontmatter:
 
 ```markdown
 ---
 name: researcher
-description: Research topics on the web before writing content
-model: anthropic:claude-haiku-4-5-20251001
+description: |
+  Deep research agent. Use for multi-step web research tasks.
+  Provide a research question; returns a comprehensive report.
+model: claude-opus-4-7
+tools:
+  - web_search
+  - fetch_url
 ---
 
-You are a research assistant with access to web search.
-
-## Your Process
-1. Search for relevant information
-2. Summarize findings clearly
+You are a systematic research agent. Your task is to...
 ```
 
-- `name` (required): Unique identifier used with the task tool.
-- `description` (required): What this subagent does. The main agent uses this to decide when to delegate.
-- `model` (optional): Model override in `provider:model-name` format.
-- Body: Becomes the `system_prompt`.
+**Frontmatter fields:**
 
-## Classes
-
-### `SubagentMetadata`
-
-**Type:** `TypedDict`
-
-Metadata for a custom subagent loaded from the filesystem.
-
-| Key | Type | Description |
+| Field | Required | Description |
 |---|---|---|
-| `name` | `str` | Unique identifier for the subagent |
-| `description` | `str` | What this subagent does |
-| `system_prompt` | `str` | Instructions for the subagent (markdown body) |
-| `model` | `str \| None` | Optional model override in `provider:model` format |
-| `source` | `str` | Where this subagent was loaded from (`'user'` or `'project'`) |
-| `path` | `str` | Absolute path to the subagent definition file |
+| `name` | Yes | Identifier used in `task(subagent_type="researcher")` |
+| `description` | Yes | Used by the parent agent to decide when to delegate |
+| `model` | No | Override model for this subagent |
+| `tools` | No | Restrict tools (omit to inherit parent's tools) |
+| `skills` | No | List of skill names to load |
+| `interrupt_on` | No | List of tool names requiring approval |
 
-## Functions
+The file body (below the frontmatter) becomes the subagent's system prompt.
 
-### `_parse_subagent_file(file_path: Path) -> SubagentMetadata | None`
+---
 
-Parses a single subagent Markdown file with YAML frontmatter.
+## `_parse_subagent_file(path) → SubAgent | None`
 
-**Parameters:**
-- `file_path`: Path to the Markdown file.
+Reads a single file, extracts YAML frontmatter and Markdown body, and returns a `SubAgent` dict. Returns `None` if the file is malformed (with a warning log).
 
-**Returns:** `SubagentMetadata` if parsing succeeds and all required fields are valid, `None` otherwise.
+---
 
-**Validation:**
-- File must have `---` delimited YAML frontmatter.
-- `name` and `description` must be non-empty strings.
-- `model` must be a string if present.
+## Architecture Notes
 
-### `_load_subagents_from_dir(agents_dir: Path, source: str) -> dict[str, SubagentMetadata]`
+**General-purpose subagent:** The SDK's `create_deep_agent()` auto-adds a general-purpose subagent unless one with the name `"general-purpose"` is already in the list, or `add_general_purpose_subagent=False` is passed. User-defined subagents from this module are passed alongside the auto-added one.
 
-Loads all subagents from a directory. Expects structure: `agents_dir/{subagent_name}/AGENTS.md`.
+**File-based discovery:** Subagent files are read at server startup (in `server_graph.py`). Adding a new `agents/*.md` file requires restarting the CLI to take effect.
 
-**Parameters:**
-- `agents_dir`: Directory containing subagent subdirectories.
-- `source`: Source identifier (`'user'` or `'project'`).
+---
 
-**Returns:** Dict mapping subagent name to metadata.
+## See Also
 
-### `list_subagents(*, user_agents_dir=None, project_agents_dir=None) -> list[SubagentMetadata]`
-
-Loads and merges subagents from user-level and project-level directories. Project-level subagents override user-level subagents with the same name.
-
-**Parameters:**
-- `user_agents_dir`: Path to `~/.deepagents/agents/`. If `None`, uses default.
-- `project_agents_dir`: Path to `.deepagents/agents/`. If `None`, uses project discovery.
-
-**Returns:** Merged list of `SubagentMetadata` dicts. Empty if no agents found.
-
-## Important Imports and Dependencies
-
-| Import | Source | Purpose |
-|---|---|---|
-| `re` | stdlib | YAML frontmatter extraction via regex |
-| `yaml` | `pyyaml` | YAML frontmatter parsing |
+- [agent.md](agent.md) — receives the loaded subagent list
+- [server_graph.md](server_graph.md) — calls `load_subagents()`
+- [../../deepagents/deepagents/middleware/subagents.md](../../deepagents/deepagents/middleware/subagents.md) — SDK `SubAgent` TypedDict

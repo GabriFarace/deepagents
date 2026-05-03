@@ -1,62 +1,77 @@
-# `widgets/` — Textual UI Widgets
+# `deepagents_cli/widgets/` — TUI Widgets
 
-This directory contains all Textual widget components that compose the `deepagents-cli` interactive terminal interface (`DeepAgentsApp`).
+All Textual widget classes used in the CLI live here. Every visible element of the TUI is a widget or composed from widgets.
 
-## Overview
+---
 
-The widgets are built on the [Textual](https://textual.textualize.io/) framework and follow its patterns: `Widget`/`Container` subclasses that `compose()` child widgets, use `reactive` attributes for auto-updating state, post `Message` objects for cross-widget communication, and use CSS for styling.
-
-## Files and Relationships
-
-### Core Application Widgets
+## Widget Inventory
 
 | File | Widget | Role |
 |---|---|---|
-| `chat_input.py` | `ChatInput` | Primary text input with autocomplete and history |
-| `messages.py` | `UserMessage`, `AssistantMessage`, `ToolCallMessage`, etc. | Individual message renderers |
-| `message_store.py` | `MessageStore`, `MessageData` | Virtualized message history data store |
-| `status.py` | `StatusBar`, `ModelLabel` | Bottom status bar with mode/model/token display |
-| `welcome.py` | `WelcomeBanner` | Startup banner with tips and session info |
-| `loading.py` | `LoadingWidget`, `Spinner` | Animated thinking/loading indicator |
+| [`chat_input.py`](chat_input.md) | `ChatInput` | Multiline text input with slash-command autocomplete |
+| [`messages.py`](messages.md) | `UserMessage`, `AssistantMessage`, `ToolCallMessage`, `DiffMessage`, `ErrorMessage` | Transcript message types |
+| [`message_store.py`](message_store.md) | `MessageStore` | In-memory registry of all displayed messages |
+| [`approval.py`](approval.md) | `ApprovalMenu` | Modal for HITL tool-call approval |
+| [`ask_user.py`](ask_user.md) | `AskUserMenu` | Modal for agent-initiated questions |
+| [`status.py`](status.md) | `StatusBar` | Top bar (model, tokens, mode, spinner) |
+| [`welcome.py`](welcome.md) | `WelcomeBanner` | Initial onboarding screen |
+| [`agent_selector.py`](README.md) | `AgentSelector` | `/agents` modal |
+| [`model_selector.py`](README.md) | `ModelSelector` | `/model` modal |
+| [`thread_selector.py`](README.md) | `ThreadSelector` | `/threads` modal |
+| [`theme_selector.py`](README.md) | `ThemeSelector` | `/theme` modal |
+| [`mcp_viewer.py`](README.md) | `MCPViewer` | `/mcp` modal — MCP server status |
+| [`notification_center.py`](README.md) | `NotificationCenter` | `/notifications` modal — async task updates |
+| [`update_available.py`](README.md) | `UpdateAvailable` | Startup banner when a new CLI version is out |
+| [`loading.py`](README.md) | `LoadingWidget` | Animated spinner during agent execution |
+| [`tool_renderers.py`](README.md) | Various renderers | Rich formatting for specific tool outputs |
+| [`tool_widgets.py`](README.md) | `ToolCallDisplay` | Reusable display for tool call + result |
+| [`autocomplete.py`](README.md) | `AutocompleteOverlay` | Floating autocomplete dropdown for `ChatInput` |
+| [`diff.py`](README.md) | `DiffView` | Side-by-side or unified diff rendering |
+| [`history.py`](README.md) | `HistoryBrowser` | Input history navigation |
 
-### Modal Screens
+---
 
-| File | Widget | Activated By |
-|---|---|---|
-| `model_selector.py` | `ModelSelectorScreen` | `/model` slash command |
-| `thread_selector.py` | `ThreadSelectorScreen` | `/threads` slash command |
-| `theme_selector.py` | `ThemeSelectorScreen` | `/theme` slash command |
-| `mcp_viewer.py` | `MCPViewerScreen` | `/mcp` slash command |
-| `agent_selector.py` | `AgentSelectorScreen` | `/agents` slash command |
-| `ask_user.py` | `AskUserMenu` | `ask_user` tool during agent execution |
-| `approval.py` | `ApprovalMenu` | Tool calls requiring HITL approval |
-
-### Support Widgets and Utilities
-
-| File | Purpose |
-|---|---|
-| `autocomplete.py` | `CompletionController` protocol, `SlashCommandController`, `FuzzyFileController`, `MultiCompletionManager` |
-| `history.py` | `HistoryManager` — chat input history with JSON-lines persistence |
-| `diff.py` | `compose_diff_lines` — per-line diff widget generation |
-| `tool_widgets.py` | Tool-specific approval preview widgets (`WriteFileApprovalWidget`, `EditFileApprovalWidget`, etc.) |
-| `tool_renderers.py` | Registry pattern mapping tool names to approval widget classes |
-| `_links.py` | `open_style_link` — clickable URL helper for Textual content |
-| `__init__.py` | Package docstring only — import from submodules directly |
-
-## Data Flow
+## Widget Hierarchy (as rendered in CLIApp)
 
 ```
-User types → ChatInput (autocomplete, history)
-          → on submit → DeepAgentsApp.handle_submit()
-                     → agent processes → TextualUIAdapter
-                                       → AssistantMessage (streaming)
-                                       → ToolCallMessage (with ApprovalMenu if HITL needed)
+Screen
+└── CLIApp
+    ├── StatusBar                      (fixed top)
+    ├── WelcomeBanner                  (hidden after first message)
+    ├── VerticalScroll
+    │   ├── UserMessage
+    │   ├── AssistantMessage
+    │   │   └── (streaming text via Markdown widget)
+    │   ├── ToolCallMessage
+    │   │   ├── ToolCallDisplay (call side)
+    │   │   └── ToolCallDisplay (result side)
+    │   └── DiffMessage / ErrorMessage
+    ├── ChatInput
+    │   └── AutocompleteOverlay        (floating, shown on "/" prefix)
+    └── [Modal layer — push_screen()]
+        ├── ApprovalMenu
+        ├── AskUserMenu
+        ├── AgentSelector
+        ├── ModelSelector
+        ├── ThreadSelector
+        ├── ThemeSelector
+        ├── MCPViewer
+        └── NotificationCenter
 ```
 
-## Key Design Patterns
+---
 
-- **Virtualized history:** `MessageStore` stores all messages as `MessageData` dataclasses; only a window of widgets is in the DOM.
-- **Modal screens:** `ModalScreen[T]` subclasses return typed values via `dismiss(value)`.
-- **Approval flow:** `ApprovalMenu.Decided` message is posted when the user approves/rejects a tool call.
-- **Autocomplete:** `MultiCompletionManager` delegates key events to the first active controller (`SlashCommandController` or `FuzzyFileController`).
-- **Theme-aware diffs:** Diff line CSS classes (`.diff-line-added`, `.diff-line-removed`) use CSS variables so they update automatically on theme change.
+## Choosing Between Selector Modals
+
+All selector modals (`AgentSelector`, `ModelSelector`, `ThreadSelector`, `ThemeSelector`) follow the same pattern:
+- Shown via `app.push_screen(modal)` 
+- Return their selection (or `None` for cancel) via Textual's screen result mechanism
+- Use a `ListView` or `DataTable` for item selection with keyboard navigation (Up/Down arrows, Enter to confirm, Escape to cancel)
+
+---
+
+## See Also
+
+- [app.md](../app.md) — creates and uses all modals
+- [remote_client.md](../remote_client.md) — produces `UIAction`s that mutate message widgets
+- [approval.md](approval.md) — the most complex modal (HITL flow)

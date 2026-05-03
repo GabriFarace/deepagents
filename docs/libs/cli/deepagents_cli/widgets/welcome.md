@@ -1,70 +1,38 @@
-# `widgets/welcome.py`
+# `deepagents_cli/widgets/welcome.py`
 
 ## High-Level Purpose
 
-This module defines the `WelcomeBanner` widget, which is displayed at the top of the chat when the CLI starts. It shows the Deep Agents ASCII art logo, version information, the current thread ID, connected LangSmith project, loaded MCP tool count, and a rotating tip.
+`WelcomeBanner` is the initial screen shown when the TUI starts, before the user has sent any message. It fills the transcript area with onboarding information. As soon as the user submits their first message, the banner is unmounted and replaced by the message transcript.
 
-## Module-Level Constants
+---
 
-| Constant | Description |
-|---|---|
-| `_TIPS` | List of 12 rotating tips shown in the welcome footer (one picked per session) |
+## Key Class
 
-**Tips include:** using `@` for file references, `/threads` for resuming conversations, `/offload` for long conversations, `/mcp` for tool listing, `/model` for model switching, `ctrl+x` for external editor, etc.
+### `WelcomeBanner(Widget)`
 
-## Classes
+**Content displayed:**
 
-### `WelcomeBanner`
+- **Project context** — current working directory and git branch
+- **Active agent** — agent name (or "default agent" if none selected)
+- **Model** — resolved model name and provider
+- **MCP servers** — list of configured MCP servers with their status (connected / error)
+- **Tips** — 2-3 contextual hints (e.g., "Type `/agents` to switch agents", "Use `@file` to attach files")
+- **Available slash commands** — abbreviated list with descriptions
+- **Version** — CLI version number
 
-**Inherits from:** `textual.widgets.Static`
+**Visibility logic:** `CLIApp` adds `WelcomeBanner` to the `VerticalScroll` on mount. When the first `UserMessage` is about to be appended, `CLIApp` calls `welcome_banner.remove()` first.
 
-The startup welcome banner.
+---
 
-**Class Variables:**
-- `auto_links = False` — Disabled to prevent a flicker cycle caused by Textual's auto-link ID randomization.
+## Architecture Notes
 
-**Constructor:**
+**MCP server status:** `WelcomeBanner` reads `MCPServerInfo` objects passed in from `server_kwargs`. If servers are listed but connection failed (status `"error"`), the banner shows the error message in red to alert the user before they start chatting.
 
-```python
-WelcomeBanner(
-    thread_id: str | None = None,
-    mcp_tool_count: int = 0,
-    *,
-    connecting: bool = False,
-    resuming: bool = False,
-    local_server: bool = False,
-    **kwargs
-)
-```
+**Async data:** The banner renders synchronously at mount time with whatever data is available. If MCP loading is still in progress (rare, since server startup is awaited), it shows "loading…" and updates via a reactive property once the data arrives.
 
-**Parameters:**
-| Parameter | Type | Description |
-|---|---|---|
-| `thread_id` | `str \| None` | Optional thread ID to display |
-| `mcp_tool_count` | `int` | Number of MCP tools loaded at startup |
-| `connecting` | `bool` | Show "Connecting..." state instead of thread info |
-| `resuming` | `bool` | Show "Resuming..." state |
-| `local_server` | `bool` | Whether running in local LangGraph server mode |
+---
 
-**Key Methods:**
+## See Also
 
-- `render() -> RenderResult` — Renders the welcome banner with logo, version, thread ID, LangSmith project link (if configured), MCP tool count, and a randomly selected tip.
-- `on_click(event: Click) -> None` — Opens the LangSmith project URL in the browser when the project link is clicked.
-
-**Content sections:**
-1. ASCII art logo (from `config.get_banner()`)
-2. Version and thread ID (or connecting/resuming state)
-3. LangSmith project link (if `LANGSMITH_API_KEY` is set)
-4. MCP tool count (if any MCP tools are loaded)
-5. Randomly selected tip from `_TIPS`
-
-## Important Imports and Dependencies
-
-| Import | Source | Purpose |
-|---|---|---|
-| `random` | stdlib | Random tip selection |
-| `textual.widgets.Static` | textual | Base static widget |
-| `theme` | `deepagents_cli.theme` | Brand colors |
-| `__version__` | `deepagents_cli._version` | Version string |
-| `get_banner`, `get_glyphs`, `fetch_langsmith_project_url` | `deepagents_cli.config` | Display helpers |
-| `open_style_link` | `widgets._links` | Clickable link helper |
+- [app.md](../app.md) — mounts and unmounts the banner
+- [mcp_tools.md](../mcp_tools.md) — provides `MCPServerInfo` list

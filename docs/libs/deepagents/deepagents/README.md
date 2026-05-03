@@ -1,66 +1,58 @@
-# `deepagents/` — Core SDK Package
+# `libs/deepagents/deepagents/` — Core SDK
 
-## Overview
+The `deepagents` SDK provides `create_deep_agent()` — a single factory function that assembles a fully configured LangGraph agent from composable pieces. Everything else in this package (backends, middleware, models) supports that factory.
 
-The `deepagents` package is the root of the deepagents SDK. It provides everything needed to create and run AI agents with built-in capabilities for file management, subagent delegation, memory, skills, and conversation compaction.
+---
 
-## File and Directory Descriptions
+## File Map
 
-| Path | Description |
+| File | Role |
 |---|---|
-| `__init__.py` | Top-level public API: re-exports `create_deep_agent` and key middleware classes |
-| `_version.py` | Single-source version string (`"0.5.6"`) |
-| `_models.py` | Helpers for resolving model strings to `BaseChatModel` instances |
-| `graph.py` | `create_deep_agent()` — the primary entry point for building a configured agent |
-| `backends/` | Pluggable storage and execution backends (state, filesystem, store, sandbox) |
-| `middleware/` | Agent middleware providing tools, system prompt injection, and request transformation |
+| [`graph.py`](graph.md) | `create_deep_agent()` — the public API entry point |
+| [`_models.py`](_models.md) | Model string → `BaseChatModel` resolution |
+| [`_tools.py`](graph.md) | Built-in tool helpers (used by graph.py) |
+| [`_excluded_middleware.py`](graph.md) | Validation of `exclude_middleware` parameter |
+| [`backends/`](backends/README.md) | Storage & execution backends (filesystem, state, sandbox, …) |
+| [`middleware/`](middleware/README.md) | Agent middleware (tools, skills, memory, HITL, summarization, …) |
+| [`profiles/`](graph.md) | Model-specific tuning profiles (OpenAI Responses API, etc.) |
+| [`__init__.py`](graph.md) | Public exports |
 
-## Package Architecture
+---
+
+## The Three-Layer Model
 
 ```
-create_deep_agent() [graph.py]
-    │
-    ├── Model resolution [_models.py]
-    │
-    ├── Backend [backends/]
-    │   ├── StateBackend (default — ephemeral, in LangGraph state)
-    │   ├── FilesystemBackend (direct filesystem access)
-    │   ├── StoreBackend (persistent cross-thread via LangGraph BaseStore)
-    │   ├── LangSmithSandbox (LangSmith sandbox execution)
-    │   ├── LocalShellBackend (local shell + filesystem)
-    │   └── CompositeBackend (routes by path prefix)
-    │
-    └── Middleware stack [middleware/]
-        ├── TodoListMiddleware (from langchain)
-        ├── SkillsMiddleware — loads SKILL.md skill catalogs
-        ├── FilesystemMiddleware — ls/read/write/edit/glob/grep/execute tools
-        ├── SubAgentMiddleware — task tool for synchronous subagent delegation
-        ├── SummarizationMiddleware — automatic context compaction
-        ├── PatchToolCallsMiddleware — fixes dangling tool calls
-        ├── AsyncSubAgentMiddleware — async tasks on remote LangGraph deployments
-        ├── AnthropicPromptCachingMiddleware (from langchain-anthropic)
-        ├── MemoryMiddleware — AGENTS.md memory injection
-        └── HumanInTheLoopMiddleware (from langchain)
+create_deep_agent()
+        │
+        ├─── Backend   — WHERE files and shell commands go
+        │    └─ BackendProtocol: ls, read, write, edit, glob, grep, execute
+        │
+        ├─── Middleware — WHAT the agent can do (wraps every model call)
+        │    └─ Stack of AgentMiddleware: injects tools, system prompt, etc.
+        │
+        └─── Model     — WHICH LLM makes decisions
+             └─ Any LangChain BaseChatModel
 ```
+
+Separating these three concerns means you can swap any one without touching the others: change the backend (local → cloud sandbox), change the middleware (add a new tool), or change the model (Claude → GPT-4o) independently.
+
+---
 
 ## Quick Start
 
 ```python
 from deepagents import create_deep_agent
 
-# Create a deep agent with defaults (Claude Sonnet 4.6, StateBackend)
-agent = create_deep_agent()
-
-# Invoke with a thread config
-result = agent.invoke(
-    {"messages": [{"role": "user", "content": "Hello!"}]},
-    config={"configurable": {"thread_id": "my-thread"}}
-)
+graph = create_deep_agent()  # defaults: Claude Sonnet 4.6, in-memory backend, standard middleware
+result = graph.invoke({"messages": [{"role": "user", "content": "List files here"}]})
 ```
 
-## Key Design Decisions
+See [`graph.md`](graph.md) for the full parameter reference.
 
-- **`StateBackend` is the default:** Files are stored in LangGraph agent state, which is checkpointed automatically. Files persist within a thread but not across threads.
-- **Middleware-first architecture:** Capabilities are added through middleware rather than custom tool implementations. This ensures consistent behavior across different agent configurations.
-- **Subagent isolation:** Sub-agents run with isolated message histories but share the parent's filesystem state. Results are returned as a single final message.
-- **Progressive disclosure for skills:** Skill metadata is injected at the start; full instructions are read on demand via `read_file`. This conserves context window space.
+---
+
+## See Also
+
+- [graph.md](graph.md) — full `create_deep_agent()` API
+- [backends/README.md](backends/README.md) — backend selection guide
+- [middleware/README.md](middleware/README.md) — middleware stack reference

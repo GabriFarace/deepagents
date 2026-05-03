@@ -1,48 +1,61 @@
-# `libs/` — Library Packages
+# libs/ — Package Overview
 
-This directory contains all independently versioned Python packages that make up the deepagents framework.
+deepagents is a Python monorepo managed with `uv`. The `libs/` directory contains all publishable packages.
 
-## Packages
-
-| Package | Version | Description |
-|---|---|---|
-| [`deepagents`](deepagents/README.md) | 0.5.6 | Core SDK — agent factory, backends, middleware |
-| [`deepagents-cli`](cli/README.md) | 0.0.47 | Interactive TUI and CLI tool |
-| [`deepagents-acp`](acp/README.md) | (see package) | Agent Client Protocol (ACP) adapter |
-| [`deepagents-evals`](evals/README.md) | (see package) | Evaluation suite and Harbor benchmarks |
-| Partners | various | Sandbox provider integrations |
+---
 
 ## Package Dependency Graph
 
 ```
-deepagents-cli ──depends on──► deepagents (SDK)
-                    │
-                    └──depends on──► deepagents-acp (optional, --acp mode)
+deepagents (SDK)          ← core; no CLI or TUI deps
+    ↑
+    ├── deepagents-cli    ← wraps SDK; adds Textual TUI + LangGraph server
+    ├── deepagents-acp    ← wraps SDK; exposes agent as ACP server
+    └── deepagents-evals  ← tests SDK behavior via CLI + Harbor benchmarks
 
-deepagents-acp ──depends on──► deepagents (SDK)
-
-deepagents-evals ──depends on──► deepagents (SDK)
-                                 deepagents-cli (for harbor)
-
-Partners (daytona, modal, quickjs, runloop)
-    └──implement──► deepagents.backends.BackendProtocol
+libs/partners/*
+    ├── daytona/          ← implements BackendProtocol via Daytona cloud sandbox
+    ├── modal/            ← implements BackendProtocol via Modal serverless
+    ├── quickjs/          ← implements BackendProtocol via in-process QuickJS
+    └── runloop/          ← implements BackendProtocol via Runloop cloud sandbox
 ```
 
-## Partner Packages
+The SDK defines `BackendProtocol`. Every sandbox provider implements it independently, so the SDK has zero runtime dependencies on any specific cloud provider.
 
-Each partner package adds a sandbox integration for a specific cloud/local execution environment:
+---
 
-| Package | Description |
-|---|---|
-| [`deepagents-daytona`](partners/daytona/README.md) | Daytona cloud sandbox |
-| [`deepagents-modal`](partners/modal/README.md) | Modal serverless sandbox |
-| [`deepagents-quickjs`](partners/quickjs/README.md) | QuickJS in-process JS sandbox |
-| [`deepagents-runloop`](partners/runloop/README.md) | Runloop cloud sandbox |
+## Package Descriptions
 
-## Architecture Roles
+| Package | Directory | Purpose |
+|---|---|---|
+| `deepagents` | `libs/deepagents/` | Core SDK — `create_deep_agent()`, backends, middleware |
+| `deepagents-cli` | `libs/cli/` | CLI tool — Textual TUI, LangGraph server subprocess, sessions |
+| `deepagents-acp` | `libs/acp/` | ACP adapter — exposes any compiled agent as an ACP server |
+| `deepagents-evals` | `libs/evals/` | Evaluation suite — Harbor integration, benchmark metrics |
+| `deepagents-daytona` | `libs/partners/daytona/` | Daytona cloud sandbox backend |
+| `deepagents-modal` | `libs/partners/modal/` | Modal serverless sandbox backend |
+| `deepagents-quickjs` | `libs/partners/quickjs/` | In-process QuickJS sandbox backend |
+| `deepagents-runloop` | `libs/partners/runloop/` | Runloop cloud sandbox backend |
 
-- **`deepagents` SDK** — The foundation. Defines the agent graph, backend protocol, and middleware system. Every other package depends on it.
-- **`deepagents-cli`** — User-facing layer. Wraps the SDK with a Textual TUI, session management, and MCP integration.
-- **`deepagents-acp`** — Protocol adapter. Exposes an SDK agent as an ACP-compliant server for remote clients.
-- **`deepagents-evals`** — Quality assurance. Runs the agent against benchmarks across multiple model providers.
-- **Partner packages** — Pluggable execution environments. Implement `BackendProtocol` for different sandboxes.
+---
+
+## Choosing Between Packages
+
+**I want to build a custom agent programmatically:** use `deepagents` (SDK) directly. Call `create_deep_agent()` and invoke or stream the resulting `CompiledStateGraph`.
+
+**I want an interactive chat interface:** use `deepagents-cli` — it provides a full TUI and handles the LangGraph server lifecycle automatically.
+
+**I want to expose my agent to an ACP client:** wrap it with `deepagents-acp`. The ACP adapter handles session management and streaming.
+
+**I need to run untrusted code safely:** add one of the `partners/*` sandbox backends. They all implement `BackendProtocol`, so you can swap them without touching agent logic.
+
+**I want to measure agent quality:** use `deepagents-evals` to run the benchmark suite, or wire up custom evals via its Harbor integration.
+
+---
+
+## See Also
+
+- [deepagents SDK docs](deepagents/deepagents/README.md)
+- [CLI docs](cli/deepagents_cli/README.md)
+- [ACP docs](acp/README.md)
+- [Evals docs](evals/README.md)

@@ -1,38 +1,60 @@
-# `examples/`
+# `examples/` — Example Agents
 
-## What This Directory Contains
+Each subdirectory is a self-contained example demonstrating a specific deepagents pattern. Examples are ordered from simple to complex.
 
-Runnable example agents demonstrating different capabilities and architectures of the deepagents framework. Each example is a self-contained Python package with its own dependencies.
+---
 
-## Examples
+## Example Catalog
 
-| Directory | Description |
-|-----------|-------------|
-| `content-builder-agent/` | File-driven content creation agent with blog and social media workflows, image generation, and YAML-defined subagents |
-| `deep_research/` | Multi-agent deep research system with an orchestrator delegating parallel research tasks to sub-agents |
-| `nvidia_deep_agent/` | Multi-model agent with NVIDIA Nemotron Super for research and RAPIDS GPU sandbox for data processing/ML |
-| `text-to-sql-agent/` | Natural language to SQL agent using SQLDatabaseToolkit against the Chinook database |
+| Directory | Pattern demonstrated | Complexity |
+|---|---|---|
+| `deep_research/` | Basic research agent with web search | Beginner |
+| `content-builder-agent/` | Memory + skills + subagents for content creation | Intermediate |
+| `text-to-sql-agent/` | NL-to-SQL query builder | Intermediate |
+| `deploy-coding-agent/` | Autonomous coder with sandbox backend | Intermediate |
+| `deploy-content-writer/` | Per-user memory via Supabase auth | Intermediate |
+| `nvidia_deep_agent/` | Multi-model architecture (frontier + Nemotron) with GPU execution | Advanced |
+| `deploy-gtm-agent/` | GTM strategist coordinating sync + async subagents | Advanced |
+| `async-subagent-server/` | Self-hosted Agent Protocol server as async subagent | Advanced |
+| `repl_swarm/` | Parallel subagent dispatch from REPL | Advanced |
+| `rlm_agent/` | Recursive REPL Mode — nested agents with decreasing depth | Advanced |
+| `better-harness/` | Autonomous harness optimization loop | Expert |
 
-## Architecture Comparison
+---
 
-| Example | Models | Subagents | Backend | Key Tools |
-|---------|--------|-----------|---------|-----------|
-| `content-builder-agent` | Claude (default) | researcher (Tavily) | FilesystemBackend | generate_cover, generate_social_image |
-| `deep_research` | Claude Sonnet 4.5 | research-agent (up to 3 parallel) | (none) | tavily_search, think_tool |
-| `nvidia_deep_agent` | Claude Sonnet 4.6 + Nemotron Super | researcher + data-processor | ModalSandbox (A10G GPU) | tavily_search, GPU skills |
-| `text-to-sql-agent` | Claude Sonnet 4.5 | (none) | FilesystemBackend | SQLDatabaseToolkit |
+## Getting Started with an Example
 
-## Common Patterns Across Examples
+```bash
+cd examples/deep_research
+uv run python main.py
+```
 
-- **`create_deep_agent`**: All examples use the same factory function from the `deepagents` package.
-- **Memory files (AGENTS.md)**: Agent identity and general instructions, always loaded into context.
-- **Skills**: On-demand workflow documentation loaded from `skills/` directories.
-- **Tavily search**: Three of four examples use Tavily for web research with full-page content fetching via httpx + markdownify (not just snippets).
-- **FilesystemBackend or ModalSandbox**: Examples use either a local filesystem backend or a Modal cloud sandbox as the execution environment.
+Each example has its own `README.md` with setup instructions and a description of what it demonstrates.
 
-## Related Docs
+---
 
-- [`content-builder-agent/README.md`](content-builder-agent/README.md)
-- [`deep_research/README.md`](deep_research/README.md)
-- [`nvidia_deep_agent/README.md`](nvidia_deep_agent/README.md)
-- [`text-to-sql-agent/README.md`](text-to-sql-agent/README.md)
+## Common Patterns Illustrated
+
+**Memory + skills (content-builder-agent):**
+- `AGENTS.md` for project memory
+- `SKILL.md` files for reusable prompt templates
+- Subagents for parallel content generation
+
+**Sandbox deployment (deploy-coding-agent):**
+- Using a partner sandbox backend (Modal, Daytona) for untrusted code
+- `create_deep_agent()` with a non-local backend
+
+**Multi-model architecture (nvidia_deep_agent):**
+- Passing different models to the parent agent and subagents
+- GPU code execution via custom sandbox
+
+**Async coordination (deploy-gtm-agent):**
+- `AsyncSubAgent` for non-blocking background tasks
+- `start_async_task` + `check_async_task` polling pattern
+
+---
+
+## See Also
+
+- [../libs/deepagents/deepagents/graph.md](../libs/deepagents/deepagents/graph.md) — `create_deep_agent()` used in all examples
+- [../libs/deepagents/deepagents/middleware/subagents.md](../libs/deepagents/deepagents/middleware/subagents.md) — subagent patterns
