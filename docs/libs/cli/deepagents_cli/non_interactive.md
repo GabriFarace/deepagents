@@ -1,68 +1,36 @@
 # `libs/cli/deepagents_cli/non_interactive.py`
 
-## High-Level Purpose
+> Console streaming runner for `deepagents -p`.
 
-`non_interactive.py` provides headless execution for the agent. When the user passes `-n "prompt"` or pipes input to the CLI, `run_non_interactive()` runs the agent without a TUI, streaming output directly to stdout. This is used for scripting, CI pipelines, and automation.
+## Position in the system
 
----
+Uses the same server-backed `RemoteAgent` as the TUI but renders to stdout and
+handles HITL policy without widgets.
 
-## Key Function
+## Functions and classes
 
-### `run_non_interactive(args) → int`
+### State and console helpers
 
-Runs the agent headlessly. Returns exit code 0 on success, 1 on error.
+`HITLIterationLimitError`, `_write_text()`, `_write_newline()`,
+`_ConsoleSpinner`, `StreamState`, and `ThreadUrlLookupState` track output and
+run state.
 
-**Steps:**
+### Stream processors
 
-1. **Bootstrap** — loads config and resolves the model spec
-2. **Agent creation** — calls `create_cli_agent()` directly (no server subprocess). In non-interactive mode, the agent graph runs in-process rather than via a LangGraph server.
-3. **Checkpointer** — uses an `InMemorySaver` for the session (no persistence by default). If `-r` is passed, uses `AsyncSqliteSaver` to resume a previous thread.
-4. **Tool approval** — no HITL is possible (no user). Tool calls are filtered by `ShellAllowListMiddleware` — only commands in `--shell-allow-list` are allowed. Disallowed commands receive a rejection `ToolMessage` instead of executing.
-5. **Streaming** — calls `graph.astream_events()` and prints tokens to stdout as they arrive (unless `--no-stream`)
-6. **Quiet mode** — if `--quiet`, agent output goes to stdout only; tool call progress and status go to stderr
+`_process_interrupts()`, `_process_ai_message()`, `_process_message_chunk()`,
+and `_process_stream_chunk()` translate stream events into console output.
 
----
+### HITL helpers
 
-## Key Parameters (from `args`)
+`_make_hitl_decision()`, `_collect_action_request_warnings()`, and
+`_process_hitl_interrupts()` apply non-interactive approval/allow-list policy.
 
-| Flag | Effect |
-|---|---|
-| `-n "prompt"` | The prompt to send |
-| `--max-turns N` | Abort after N agentic steps (prevents infinite loops) |
-| `--no-stream` | Buffer full response, print at end |
-| `--quiet` | Only final response to stdout; rest to stderr |
-| `--shell-allow-list "cmd1,cmd2"` | Comma-separated allowed shell commands |
-| `-r [thread_id]` | Resume a previous thread |
+### Run loop
 
----
+`_stream_agent()`, `_run_agent_loop()`, `_build_non_interactive_header()`,
+`_run_startup_command()`, and `run_non_interactive()` implement the print-mode
+entry point.
 
-## Output Format
+## Gotchas
 
-By default (no `--quiet`):
-```
-[tool call: execute("ls -la")]
-[tool result: total 48\n...]
-Final response text here...
-```
-
-With `--quiet`:
-- stderr: tool call progress
-- stdout: only the final response text
-
----
-
-## Architecture Notes
-
-**In-process vs subprocess:** Non-interactive mode runs the agent graph directly in the CLI process (no `langgraph dev`). This is faster (no subprocess startup) but means the graph doesn't persist automatically — each run starts fresh unless `-r` is passed.
-
-**Shell allow-list as safety net:** Without HITL, the agent could run arbitrary shell commands. The allow-list is the only guardrail. In CI environments, consider passing an explicit `--shell-allow-list` or `--auto-approve=False` to prevent unintended actions.
-
-**Max turns:** The `--max-turns` limit prevents infinite agentic loops in unattended execution. The default is a conservative cap; increase it for complex tasks.
-
----
-
-## See Also
-
-- [main.md](main.md) — dispatches to `run_non_interactive()`
-- [agent.md](agent.md) — `create_cli_agent()` called here
-- [../../deepagents/deepagents/middleware/README.md](../../deepagents/deepagents/middleware/README.md) — `ShellAllowListMiddleware`
+Because there is no approval UI, safety must be configured up front.

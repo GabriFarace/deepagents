@@ -1,60 +1,42 @@
-# `examples/` — Example Agents
+# `examples/`
 
-Each subdirectory is a self-contained example demonstrating a specific deepagents pattern. Examples are ordered from simple to complex.
+> Short guide to the example agents shipped with Deep Agents.
 
----
+The examples are not meant to document every source block. They show common ways
+to assemble the SDK, CLI, deploy configuration, skills, memory files, MCP
+servers, subagents, and backends into working agents.
 
-## Example Catalog
+## Examples at a glance
 
-| Directory | Pattern demonstrated | Complexity |
-|---|---|---|
-| `deep_research/` | Basic research agent with web search | Beginner |
-| `content-builder-agent/` | Memory + skills + subagents for content creation | Intermediate |
-| `text-to-sql-agent/` | NL-to-SQL query builder | Intermediate |
-| `deploy-coding-agent/` | Autonomous coder with sandbox backend | Intermediate |
-| `deploy-content-writer/` | Per-user memory via Supabase auth | Intermediate |
-| `nvidia_deep_agent/` | Multi-model architecture (frontier + Nemotron) with GPU execution | Advanced |
-| `deploy-gtm-agent/` | GTM strategist coordinating sync + async subagents | Advanced |
-| `async-subagent-server/` | Self-hosted Agent Protocol server as async subagent | Advanced |
-| `repl_swarm/` | Parallel subagent dispatch from REPL | Advanced |
-| `rlm_agent/` | Recursive REPL Mode — nested agents with decreasing depth | Advanced |
-| `better-harness/` | Autonomous harness optimization loop | Expert |
+| Example | Demonstrates |
+| --- | --- |
+| [`deep_research`](deep_research.md) | Web research orchestration with a dedicated research subagent, Tavily search, and reflection. |
+| [`content-builder-agent`](content-builder-agent.md) | File-configured content agent using memory, skills, a filesystem backend, image tools, and a YAML-defined research subagent. |
+| [`text-to-sql-agent`](text-to-sql-agent.md) | Natural-language SQL over Chinook using LangChain SQL toolkit tools and workflow skills. |
+| [`deploy-coding-agent`](deploy-coding-agent.md) | `deepagents deploy` for a coding assistant running in a LangSmith sandbox. |
+| [`deploy-content-writer`](deploy-content-writer.md) | Deployed content writer with skills, Supabase auth, and per-user memory. |
+| [`deploy-mcp-docs-agent`](deploy-mcp-docs-agent.md) | Deployed documentation researcher that uses an MCP docs server before answering. |
+| [`deploy-gtm-agent`](deploy-gtm-agent.md) | Deployed GTM strategist combining supervisor instructions, skills, MCP, and subagents. |
+| [`async-subagent-server`](async-subagent-server.md) | Self-hosted Agent Protocol server used as an async subagent by a supervisor. |
+| [`nvidia_deep_agent`](nvidia_deep_agent.md) | Multi-model agent with NVIDIA-hosted subagents and a routed GPU/CPU backend. |
+| [`ralph_mode`](ralph_mode.md) | Autonomous CLI loop with fresh context per iteration and filesystem/git persistence. |
+| [`rlm_agent`](rlm_agent.md) | Recursive compiled subagent chain plus QuickJS REPL parallel tool calls. |
+| [`repl_swarm`](repl_swarm.md) | Skill-packaged TypeScript swarm helper that fans out `task` calls from the REPL. |
+| [`downloading_agents`](downloading_agents.md) | Agent distribution as ordinary folders or zip files. |
+| [`better-harness`](better-harness.md) | Eval-driven outer loop where one Deep Agent edits another agent's harness surfaces. |
 
----
+## How to read this section
 
-## Getting Started with an Example
+Start with `deep_research` for the canonical SDK pattern: a supervisor prompt,
+custom tools, and a specialized subagent passed to `create_deep_agent`. Then read
+`content-builder-agent` and `text-to-sql-agent` to see how skills and memory turn
+that skeleton into task-specific workflows.
 
-```bash
-cd examples/deep_research
-uv run python main.py
-```
+The `deploy-*` examples are configuration-first. They are best read after the
+CLI and deploy docs because their main source of behavior is `AGENTS.md`,
+`deepagents.toml`, `mcp.json`, `skills/`, and `subagents/`, not Python
+construction code.
 
-Each example has its own `README.md` with setup instructions and a description of what it demonstrates.
-
----
-
-## Common Patterns Illustrated
-
-**Memory + skills (content-builder-agent):**
-- `AGENTS.md` for project memory
-- `SKILL.md` files for reusable prompt templates
-- Subagents for parallel content generation
-
-**Sandbox deployment (deploy-coding-agent):**
-- Using a partner sandbox backend (Modal, Daytona) for untrusted code
-- `create_deep_agent()` with a non-local backend
-
-**Multi-model architecture (nvidia_deep_agent):**
-- Passing different models to the parent agent and subagents
-- GPU code execution via custom sandbox
-
-**Async coordination (deploy-gtm-agent):**
-- `AsyncSubAgent` for non-blocking background tasks
-- `start_async_task` + `check_async_task` polling pattern
-
----
-
-## See Also
-
-- [../libs/deepagents/deepagents/graph.md](../libs/deepagents/deepagents/graph.md) — `create_deep_agent()` used in all examples
-- [../libs/deepagents/deepagents/middleware/subagents.md](../libs/deepagents/deepagents/middleware/subagents.md) — subagent patterns
+The remaining examples are advanced patterns: async Agent Protocol delegation,
+recursive compiled agents, QuickJS skill modules, autonomous looping, GPU
+backends, and eval-driven harness optimization.

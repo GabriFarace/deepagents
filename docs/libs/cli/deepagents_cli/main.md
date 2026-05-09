@@ -1,75 +1,62 @@
 # `libs/cli/deepagents_cli/main.py`
 
-## High-Level Purpose
+> Main CLI entry point. It parses commands, checks dependencies, resolves mode
+> and agent/session choices, starts the server when needed, and hands control to
+> Textual, non-interactive, ACP, or utility flows.
 
-`main.py` is the CLI entry point. It is the first Python code that runs when the user types `deepagents`. Its job is narrow: parse arguments, bootstrap configuration, and dispatch to one of three execution modes (interactive TUI, non-interactive headless, or ACP server). It intentionally defers heavy imports until after the fast-path checks (e.g., `--version`) complete, keeping cold-start time low.
+## Position in the system
 
----
+`cli_main()` is the console-script target. It is the parent-process control
+plane: it does not run the agent graph itself, but decides which mode should
+run and supplies the arguments needed by `server_manager.py`.
 
-## Key Functions
+## Functions and classes
 
-### `cli_main() → None`
+### `_resolve_agent_arg(args)` and `_recent_agent_is_valid(name)`
 
-The top-level entry point registered as the `deepagents` console script in `pyproject.toml`.
+Resolve the configured agent name. Explicit `-a` wins; resume mode defers
+agent inference to saved thread metadata; config default and recent agent come
+next; the hard-coded default is last. `_recent_agent_is_valid()` guards stale
+config entries whose agent directory no longer exists.
 
-Execution steps:
+### Dependency and warning helpers
 
-1. **Fast version check** — if `--version` is the only argument, prints the version and exits without importing any heavy dependencies.
-2. **Dependency validation** — calls `check_cli_dependencies()` which ensures optional extras (`requests`, `python-dotenv`, `tavily-python`, `textual`) are installed. Prints a helpful error and exits if any are missing.
-3. **Argument parsing** — `parse_args()` returns a `Namespace` with all CLI flags.
-4. **Stdin piping** — `apply_stdin_pipe()` converts piped stdin into a `-n` prompt so `echo "explain this" | deepagents` works without special flags.
-5. **Mode dispatch**:
-   - `-n` / `--non-interactive` → `run_non_interactive()`
-   - `--acp` → `_run_acp_cli_async()` (starts an ACP server)
-   - default → `run_textual_cli_async()`
+`check_cli_dependencies()` exits on missing required CLI extras.
+`_ripgrep_install_hint()`, `check_optional_tools()`,
+`build_missing_tool_notification()`, and `format_tool_warning_cli()` turn
+missing recommended tools into either TUI notifications or non-interactive
+warnings.
 
-### `run_textual_cli_async(args) → None`
+### Argument parsing and early command handling
 
-Sets up configuration and runs the interactive TUI.
+`_show_bare_command_group_help()` and `parse_args()` build the CLI command
+surface. The parser covers utility commands, interactive mode, `-p` print mode,
+ACP mode, model/agent/session flags, sandbox flags, MCP config/trust flags, and
+debug options.
 
-1. Resolves the model spec cheaply (no full config load) for the status bar display.
-2. Calls `apply_model_config()` to propagate model and provider settings into environment variables that the LangGraph server subprocess will inherit.
-3. Calls `run_textual_app()` from `app.py` with server kwargs (MCP preload settings, model config, thread ID for resume, etc.).
+### Runtime mode functions
 
-### `parse_args() → argparse.Namespace`
+`run_textual_cli_async()` runs the interactive Textual app around a server
+session. `_run_acp_cli_async()` exposes the graph through ACP. `apply_stdin_pipe()`
+folds piped stdin into the prompt. `_print_session_stats()` formats stats
+output. `_check_mcp_project_trust()` centralizes project MCP trust decisions.
 
-Defines all CLI flags. Key flags:
+### `cli_main()`
 
-| Flag | Effect |
-|---|---|
-| `--version` | Print version and exit |
-| `-n "prompt"` | Non-interactive mode |
-| `--acp` | Start ACP server |
-| `-r [thread_id]` | Resume a previous thread (omit ID for most recent) |
-| `--model MODEL` | Override model for this session |
-| `--mcp-config PATH` | Path to MCP config file |
-| `--shell-allow-list CMDS` | Comma-separated allowed shell commands (non-interactive) |
-| `--max-turns N` | Limit agentic loop iterations (non-interactive) |
-| `--no-stream` | Buffer full response before printing (non-interactive) |
-| `--quiet` | Print only final response to stdout; progress to stderr |
-| `--agent NAME` | Select a named agent from `~/.deepagents/agents/` |
+Top-level synchronous entry. It checks dependencies, parses args, dispatches
+utility commands, resolves agent/model/session context, handles stdin and MCP
+trust, then runs the chosen async mode.
 
-### `apply_stdin_pipe(args) → None`
+## Flow walk-through
 
-If stdin is not a TTY (e.g., piped input), reads stdin and sets `args.non_interactive = True` and `args.prompt = <stdin content>`. This normalizes the two ways of providing a non-interactive prompt.
+1. User runs `deepagents`.
+2. `cli_main()` parses args and handles immediate utility commands.
+3. Interactive or print mode resolves agent, model, session, and MCP trust.
+4. The selected async runner opens `server_session()`.
+5. Stream output is rendered by Textual or the non-interactive console loop.
 
-### `_run_acp_cli_async(args) → None`
+## Gotchas
 
-Starts the ACP server mode. Creates a `deepagents_acp.AgentServerACP` instance and runs its async server loop. Useful for integrating the agent into external ACP-compatible clients.
-
----
-
-## Architecture Notes
-
-The startup code is split across `main.py` and `config.py` deliberately. `main.py` owns argument parsing and mode dispatch. `config.py` owns the settings singleton, dotenv loading, and lazy bootstrap. The split means tests can import `config.py` without triggering argument parsing side effects.
-
-The heavy Textual import (`from deepagents_cli.app import run_textual_app`) is deferred until after argument parsing, so `--version` and `--help` remain near-instant.
-
----
-
-## See Also
-
-- [config.md](config.md) — settings bootstrap details
-- [app.md](app.md) — what `run_textual_app()` does
-- [non_interactive.md](non_interactive.md) — headless mode
-- [server_manager.md](server_manager.md) — server startup called from app
+Imports are intentionally delayed in hot paths. Avoid moving heavy Textual,
+LangGraph, or optional-provider imports to module import time unless startup
+cost has been considered.

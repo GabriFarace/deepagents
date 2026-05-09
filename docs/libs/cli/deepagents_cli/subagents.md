@@ -1,71 +1,77 @@
 # `libs/cli/deepagents_cli/subagents.py`
 
-## High-Level Purpose
+> Subagent loader for CLI.
 
-`subagents.py` loads custom subagent definitions from the user's agent directory (`~/.deepagents/{agent_name}/agents/`). Each subagent is a Markdown file with YAML frontmatter. This module parses those files into `SubAgent` TypedDicts that are passed to `create_cli_agent()`, enabling the agent to delegate tasks to specialized sub-agents.
+## Position in the system
 
----
+This helper is imported by the CLI core rather than being an entry point itself. It keeps one peripheral concern isolated so `main.py`, `app.py`, and the server/client lifecycle files can stay focused on orchestration.
 
-## Key Function
+## Functions and classes
 
-### `load_subagents(agent_name=None) → list[SubAgent]`
+### `SubagentMetadata`
 
-Scans `~/.deepagents/{agent_name}/agents/` (or `~/.deepagents/agents/` if no agent name) for `*.md` files. Parses each as a subagent definition and returns the list.
+Metadata for a custom subagent loaded from filesystem.
 
-Returns `[]` if the directory doesn't exist.
+The class owns local state for this module and limits mutation to the storage, UI, provider, or parsing boundary named in the class documentation.
 
----
+### `_parse_subagent_file(file_path: Path)`
 
-## Subagent File Format
+Parse a subagent markdown file with YAML frontmatter.
 
-Each file in `agents/` is a Markdown file with YAML frontmatter:
+Additional notes from the source docstring:
 
-```markdown
----
-name: researcher
-description: |
-  Deep research agent. Use for multi-step web research tasks.
-  Provide a research question; returns a comprehensive report.
-model: claude-opus-4-7
-tools:
-  - web_search
-  - fetch_url
----
+```text
+The file must have YAML frontmatter (delimited by ---) containing at minimum
+'name' and 'description' fields. The body of the file becomes the system_prompt.
 
-You are a systematic research agent. Your task is to...
+Args:
+    file_path: Path to the markdown file.
+
+Returns:
+    SubagentMetadata if parsing succeeds, None otherwise.
 ```
 
-**Frontmatter fields:**
+In the larger CLI flow, this block is intentionally scoped: callers pass already-scoped inputs, and the function either returns a normalized value or performs the module-specific side effect described above. Keep its return shape stable because the importing core files usually do not re-validate it.
 
-| Field | Required | Description |
-|---|---|---|
-| `name` | Yes | Identifier used in `task(subagent_type="researcher")` |
-| `description` | Yes | Used by the parent agent to decide when to delegate |
-| `model` | No | Override model for this subagent |
-| `tools` | No | Restrict tools (omit to inherit parent's tools) |
-| `skills` | No | List of skill names to load |
-| `interrupt_on` | No | List of tool names requiring approval |
+### `_load_subagents_from_dir(agents_dir: Path, source: str)`
 
-The file body (below the frontmatter) becomes the subagent's system prompt.
+Load subagents from a directory.
 
----
+Additional notes from the source docstring:
 
-## `_parse_subagent_file(path) → SubAgent | None`
+```text
+Expects structure: agents_dir/{subagent_name}/AGENTS.md
 
-Reads a single file, extracts YAML frontmatter and Markdown body, and returns a `SubAgent` dict. Returns `None` if the file is malformed (with a warning log).
+Args:
+    agents_dir: Directory containing subagent folders.
+    source: Source identifier ('user' or 'project').
 
----
+Returns:
+    Dict mapping subagent name to metadata.
+```
 
-## Architecture Notes
+In the larger CLI flow, this block is intentionally scoped: callers pass already-scoped inputs, and the function either returns a normalized value or performs the module-specific side effect described above. Keep its return shape stable because the importing core files usually do not re-validate it.
 
-**General-purpose subagent:** The SDK's `create_deep_agent()` auto-adds a general-purpose subagent unless one with the name `"general-purpose"` is already in the list, or `add_general_purpose_subagent=False` is passed. User-defined subagents from this module are passed alongside the auto-added one.
+### `list_subagents(*, user_agents_dir: Path | None=None, project_agents_dir: Path | None=None)`
 
-**File-based discovery:** Subagent files are read at server startup (in `server_graph.py`). Adding a new `agents/*.md` file requires restarting the CLI to take effect.
+List subagents from user and/or project directories.
 
----
+Additional notes from the source docstring:
 
-## See Also
+```text
+Scans for subagent definitions in the provided directories.
+Project subagents override user subagents with the same name.
 
-- [agent.md](agent.md) — receives the loaded subagent list
-- [server_graph.md](server_graph.md) — calls `load_subagents()`
-- [../../deepagents/deepagents/middleware/subagents.md](../../deepagents/deepagents/middleware/subagents.md) — SDK `SubAgent` TypedDict
+Args:
+    user_agents_dir: Path to user-level agents directory.
+    project_agents_dir: Path to project-level agents directory.
+
+Returns:
+    List of subagent metadata, with project subagents taking precedence.
+```
+
+In the larger CLI flow, this block is intentionally scoped: callers pass already-scoped inputs, and the function either returns a normalized value or performs the module-specific side effect described above. Keep its return shape stable because the importing core files usually do not re-validate it.
+
+## Gotchas
+
+Most helpers in this area are called from core CLI files that are documented separately. Check both sides of the call before changing return shapes or exception behavior.

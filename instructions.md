@@ -1,233 +1,340 @@
-# Instructions: Building a `docs/` Directory and Learning Roadmap for Any Codebase
+# Instructions: Building a `docs/` Tree, Roadmap, and Prerequisite Chapters for the `deepagents` Codebase
 
-This document describes a repeatable process for generating a structured documentation tree and a learning roadmap from an existing codebase. It was derived from work done on the `deepagents` monorepo but is intentionally general.
+This document describes the **current** approach for documenting the `deepagents`
+monorepo. It supersedes the prior version of `instructions.md` (which targeted
+API-surface-only documentation). The current pass is deeper, CLI-focused, and
+self-contained.
+
+> **For Claude:** read `book_diary.md` first when resuming a session — it tracks
+> per-stage progress so work can be resumed across context windows.
 
 ---
 
 ## Goal
 
-Produce two things:
+Produce four artefacts:
 
-1. **A `docs/` directory** — one `.md` file per source file, organized in the same directory hierarchy as the source. Each file explains *what* the source file does, not just *how* (no line-by-line comments; high-level purpose, key abstractions, and API surface).
-2. **A `docs/ROADMAP.md`** — a dependency-ordered learning path through the codebase, from foundational concepts to advanced integrations.
+1. **`docs/`** — a directory mirroring the source hierarchy of `libs/` (and a thin
+   summary of `examples/`). Each documented source file gets a corresponding
+   `.md` that explains the file **block-by-block** (every function and class
+   gets a 1–3 paragraph explanation of its logic, inputs, side effects, and
+   role in the larger flow).
+2. **`docs/ROADMAP.md`** — a dependency-ordered learning path from prerequisites
+   through the SDK core, CLI internals, and adapters. Every stage names the
+   exact files to read in order.
+3. **`docs/prerequisites/`** — self-contained chapters on **LangGraph** and
+   **LangChain**, sourced from the official documentation (`python.langchain.com`,
+   `langchain-ai.github.io/langgraph`) via `WebFetch`. The chapters cover only
+   the concepts deepagents actually uses, but cover them deeply enough that the
+   reader never has to leave the docs to follow the rest of the material.
+4. **`docs/libs/cli/cli_architecture.md`** — a generic chapter on **how agent
+   CLIs are built** (TUI loop, streaming, slash commands, MCP tools, sessions,
+   HITL approvals), explaining where deepagents-cli's choices align with or
+   diverge from comparable projects (Claude Code, Codex). The comparison stays
+   conceptual — no scraping of closed-source repositories.
 
-Both artifacts are intended for a developer who is new to the project and wants to understand it systematically.
+### Out of scope (for this pass)
 
----
+- CI/CD workflows (`.github/workflows/`)
+- Infrastructure, release tooling, action.yml
+- `release-please-config.json`, `Makefile` internals beyond a sentence
 
-## Phase 1 — Reconnaissance
-
-Before writing a single doc, build a complete mental model of the codebase.
-
-### 1.1 Understand the repository shape
-
-- What kind of project is it? (library, monorepo, service, CLI tool, etc.)
-- What are the top-level directories? Which ones contain source code vs. config vs. tests?
-- What package manager and build system are used?
-- What is the entry point? (e.g., `main.py`, `__init__.py`, `index.ts`, `main.go`)
-
-### 1.2 Read the existing orientation files first
-
-In order of priority:
-1. `README.md` at the root
-2. Any `CONTRIBUTING.md`, `AGENTS.md`, `CLAUDE.md`, or `DEVELOPMENT.md`
-3. `pyproject.toml` / `package.json` / `go.mod` — for declared dependencies and package names
-4. Any existing architecture docs or ADRs
-
-### 1.3 Map the dependency graph
-
-For monorepos or multi-package repos, draw (or note) the dependency graph between packages:
-- Which package is the core/SDK that others depend on?
-- Which packages are adapters, wrappers, or optional plugins?
-- Which packages are tools (CLI, TUI) that consume the core?
-
-This graph becomes the spine of the roadmap.
-
-### 1.4 Identify the key architectural concepts
-
-Read the most important source files (entry points, core abstractions, primary public API). Aim to answer:
-- What is the single most important function/class a new developer should understand first?
-- What are the 3–5 central abstractions? (e.g., protocols, base classes, state types)
-- What are the main execution flows? (e.g., request → middleware → handler → response)
+These will be documented in a future pass.
 
 ---
 
-## Phase 2 — Build the `docs/` Directory
+## Granularity rules
 
-### 2.1 Mirror the source hierarchy
+For every source file:
 
-Create a `docs/` directory. For every source file you document, create a corresponding `.md` file at the same relative path, with the `.md` extension replacing the source extension.
+- **List every public function and class** as its own block. Skip trivial
+  one-line getters/setters and pure dataclass fields with no methods.
+- **For each block, write 1–3 paragraphs** covering:
+  - what the block computes / what it returns,
+  - which arguments matter and what they constrain,
+  - which state it mutates (LangGraph state, env vars, filesystem, etc.),
+  - which other blocks call it and which it calls in turn,
+  - any non-obvious behaviour (control flow inversions, hidden side effects,
+    retry logic, dispatch tables, decorators that change the signature).
+- **Do not transcribe code line-by-line** — that becomes stale and bloats tokens.
+  But do walk the reader through any non-obvious *control flow* (e.g., a state
+  machine, a two-pass algorithm, a generator wired to a callback).
+- **Quote system prompts in full** when documenting middleware or factories that
+  inject them. System prompts are part of the orchestration design and are
+  invisible to a reader who only reads the code skeleton.
+- **Quote tool descriptions** when documenting tool-bearing middleware.
+
+---
+
+## Directory structure
 
 ```
-src/graph.py          →  docs/src/graph.md
-libs/cli/app.py       →  docs/libs/cli/app.md
-cmd/server/main.go    →  docs/cmd/server/main.md
+docs/
+├── README.md                                ← top-level navigation index
+├── ROADMAP.md                               ← 14-stage learning path
+├── prerequisites/
+│   ├── README.md
+│   ├── langchain.md                         ← self-contained LangChain primer
+│   └── langgraph.md                         ← self-contained LangGraph primer
+├── libs/
+│   ├── README.md                            ← package dependency graph
+│   ├── deepagents/
+│   │   ├── README.md
+│   │   └── deepagents/
+│   │       ├── README.md
+│   │       ├── graph.md
+│   │       ├── _models.md
+│   │       ├── _tools.md
+│   │       ├── backends/
+│   │       │   ├── README.md
+│   │       │   ├── protocol.md
+│   │       │   ├── state.md
+│   │       │   ├── filesystem.md
+│   │       │   ├── local_shell.md
+│   │       │   ├── sandbox.md
+│   │       │   ├── store.md
+│   │       │   ├── composite.md
+│   │       │   ├── langsmith.md
+│   │       │   └── utils.md
+│   │       ├── middleware/
+│   │       │   ├── README.md
+│   │       │   ├── filesystem.md
+│   │       │   ├── subagents.md
+│   │       │   ├── async_subagents.md
+│   │       │   ├── memory.md
+│   │       │   ├── skills.md
+│   │       │   ├── summarization.md
+│   │       │   ├── patch_tool_calls.md
+│   │       │   └── permissions.md
+│   │       └── profiles/
+│   │           ├── README.md
+│   │           ├── harness/
+│   │           └── provider/
+│   ├── cli/
+│   │   ├── README.md
+│   │   ├── cli_architecture.md              ← generic CLI architecture chapter
+│   │   └── deepagents_cli/
+│   │       ├── README.md
+│   │       ├── main.md
+│   │       ├── app.md
+│   │       ├── server.md / server_manager.md / server_graph.md
+│   │       ├── remote_client.md
+│   │       ├── command_registry.md
+│   │       ├── sessions.md / hooks.md
+│   │       ├── mcp_tools.md / mcp_auth.md / mcp_commands.md / mcp_trust.md
+│   │       ├── widgets/                     ← per-widget docs
+│   │       ├── deploy/
+│   │       ├── skills/
+│   │       ├── mcp_providers/
+│   │       └── integrations/
+│   ├── acp/
+│   ├── evals/
+│   ├── partners/
+│   │   ├── daytona/
+│   │   ├── modal/
+│   │   ├── quickjs/
+│   │   └── runloop/
+│   └── repl/
+└── examples/
+    ├── README.md
+    └── (one short doc per example agent)
 ```
 
-### 2.2 For each source file, write a doc with this structure
+---
+
+## Per-file documentation template
 
 ```markdown
-# `path/to/file.ext`
+# `path/to/file.py`
 
-## High-Level Purpose
+> One-sentence summary. The role of this file in the system.
 
-One paragraph. What problem does this file solve? What role does it play in the system?
-Do NOT describe the code line-by-line. Describe what it IS and WHY it exists.
+## Position in the system
 
-## [Key Abstractions / Constants / Types / Functions / Classes]
+How does this file fit in? Who imports it, what does it depend on, where does
+it sit in the call graph (e.g., "called by `graph.py:create_deep_agent` after
+backend initialisation"). Use a small ASCII diagram if helpful.
 
-For each public symbol (class, function, type, constant):
-- Name and signature
-- What it does (1–3 sentences)
-- Parameters table if there are many
-- Return value
-- Any non-obvious behavior or gotchas
+## Imports and module-level state
 
-## [Architecture Notes] (optional)
+If the imports / module-level constants are worth flagging (private helpers,
+re-exports, env-var reads at import time, frozen registries), call them out.
+Otherwise skip this section.
 
-If the file has a notable internal structure (e.g., a class hierarchy, a two-pass algorithm,
-a state machine), describe it here with a small ASCII diagram if helpful.
+## Functions and classes
 
-## [Usage Example] (optional)
+For every function and every class:
 
-A short code snippet showing how to use the main export, if it's non-obvious.
+### `Name(signature)`
 
-## [See Also] (optional)
+What it does. What it returns. What it mutates. Who calls it. Non-obvious
+behaviour. If it's a class, list its methods underneath as sub-blocks.
 
-Links to related docs files.
+(Trivial helpers may be grouped: "The next four functions all just normalise
+path strings; they all return `str` and ignore symlinks.")
+
+## System prompts and tool descriptions (if any)
+
+Quote them in full inside fenced code blocks. Annotate any placeholders.
+
+## Flow walk-through (if the file orchestrates non-trivial control flow)
+
+A numbered list of what happens in order, citing line numbers as
+`file.py:123` so the reader can jump to source.
+
+## Gotchas
+
+Anything a reader is likely to misread or mis-modify.
 ```
 
-### 2.3 Write `README.md` files for directories
+---
 
-For every directory that contains multiple related files, write a `docs/<dir>/README.md` that:
-- States the purpose of the directory
-- Lists all files with a one-line description of each
-- Describes any hierarchy or relationships between files (e.g., a class hierarchy diagram)
-- Provides a "choosing between X and Y" guide if the directory contains alternatives (e.g., multiple backends, multiple adapters)
+## Roadmap structure (`docs/ROADMAP.md`)
 
-### 2.4 Prioritization — what to document and what to skip
+The roadmap is a learning path, not a table of contents. Each stage:
 
-**Always document:**
-- Core abstractions (protocols, base classes, primary public API)
-- Entry points (factory functions, `main()`, CLI entrypoints)
-- Middleware / pipeline components
-- Configuration and wiring files
+- **Number, title, time estimate**
+- **Goal sentence** ("after this stage you will understand X")
+- **Prerequisites** (which earlier stages are required)
+- **Files to read in order**, with one-line descriptions
+- **Key insight** — the 2–3 things that should "click"
 
-**Document if non-trivial:**
-- Tests — only if they reveal usage patterns not obvious from source
-- Examples — a short summary of what each example demonstrates
-- CI/CD workflows — what each workflow does and when it triggers
-- Config files (`pyproject.toml`, `Makefile`, etc.) — only if they encode important conventions
+### Stage outline
 
-**Skip or keep minimal:**
-- Auto-generated files
-- Trivial `__init__.py` re-exports (one sentence is enough)
-- Lock files
-- Files whose purpose is fully captured by their parent directory README
-
-### 2.5 Write `docs/README.md` (the top-level index)
-
-This is the navigation hub. It should contain:
-- A one-paragraph summary of what the project does
-- A visual tree of the `docs/` directory
-- A "Quick Navigation" table organized by two axes:
-  - **By layer** (top to bottom, e.g., UI → protocol → core → backends)
-  - **By concept** (e.g., "how do I add a new tool?", "where is auth handled?")
-- Links to `ROADMAP.md` and any other entry points
+1. **Orientation** — `README.md`, `AGENTS.md`, `CLAUDE.md`
+2. **Prerequisites: LangChain** — `docs/prerequisites/langchain.md`
+3. **Prerequisites: LangGraph** — `docs/prerequisites/langgraph.md`
+4. **The deep-agent flow** — `docs/libs/deepagents/deepagents/graph.md`,
+   `_models.md`, system prompt
+5. **Backends** — protocol → all 8 implementations
+6. **Middleware** — `subagents` → `filesystem` → `summarization` → others
+7. **Profiles** — model-specific harness/provider profiles
+8. **Generic CLI architecture** — `docs/libs/cli/cli_architecture.md`
+9. **CLI bootstrap and server lifecycle** — `main.py`, `server.py`,
+   `server_manager.py`, `server_graph.py`, `agent.py`
+10. **CLI runtime: TUI, streaming, widgets** — `app.py`, `remote_client.py`,
+    widgets
+11. **CLI extensions** — slash commands, hooks, sessions, MCP, skills, deploy
+12. **ACP adapter** — `libs/acp/`
+13. **Sandboxes (partners)** — daytona / modal / quickjs / runloop
+14. **Examples and evals** — examples + `libs/evals/`
 
 ---
 
-## Phase 3 — Build `docs/ROADMAP.md`
+## Prerequisites chapters
 
-The roadmap is not a table of contents. It is a **learning path** — ordered so that each stage builds on the previous one, with no forward dependencies.
+`docs/prerequisites/langchain.md` covers, at minimum:
 
-### 3.1 Structure the roadmap by stages
+- `BaseChatModel`, `init_chat_model`, model invocation styles
+- Messages: `HumanMessage`, `AIMessage`, `ToolMessage`, `SystemMessage`
+- Tool calling: `BaseTool`, the `@tool` decorator, `bind_tools`, structured tool
+  responses
+- Structured output (`with_structured_output`)
+- Anthropic prompt caching as exposed in `langchain_anthropic`
 
-Each stage has:
-- A **stage number and title**
-- An estimated **time to complete**
-- A **goal** sentence (what understanding you'll have after this stage)
-- A table of **what to read** (doc file | source file | what you'll learn)
-- A **key insight** or **key concepts** section — the 2–3 things that should "click" in this stage
-- A **dependencies** note — what earlier stages must be understood first
+`docs/prerequisites/langgraph.md` covers, at minimum:
 
-### 3.2 Ordering principles
+- `StateGraph`, `START`, `END`, nodes and edges, conditional edges
+- The reducer pattern; `MessagesState`; `add_messages`
+- Compilation; `CompiledStateGraph`; `.invoke` / `.astream` / `.astream_events`
+- Checkpointers and threads (persistence)
+- Interrupts and resumption
+- The agent loop (`create_react_agent` and the manual equivalent)
+- `AgentMiddleware` (the new middleware API): hooks `before_model`,
+  `after_model`, `wrap_model_call`, `wrap_tool_call`
+- Sub-graphs and the `task` pattern
 
-Order stages by:
-1. **Conceptual dependency** — you can't understand middleware until you understand the protocol it operates on
-2. **Breadth before depth** — understand what exists before diving into any one part
-3. **Core before periphery** — SDK before CLI before ACP before evals
-4. **Data types before logic** — type definitions before algorithms that use them
-
-### 3.3 Include a prerequisites stage
-
-If the project depends on external frameworks (LangGraph, React, Kubernetes, etc.), add a **Stage 1: Prerequisites** that lists external resources the reader should consume first, and the concepts they need to have internalized before proceeding.
-
-### 3.4 Include a "how to use this roadmap" section
-
-At the top, explain:
-- Each stage is a self-contained learning unit
-- "Read" links point to docs (high-level), "Source" links point to code (deep dive)
-- Time estimates are for reading docs only; add 2–3x for exploring source code
-
-### 3.5 End with an advanced topics stage
-
-The final stage should cover:
-- CI/CD and release process
-- How to contribute
-- Where to find things not covered in the roadmap (e.g., test patterns, example agents)
+Both chapters are **sourced from the official docs** via WebFetch, distilled to
+exactly the API surface deepagents uses. Where deepagents extends or specialises
+a base concept (e.g., `AgentMiddleware`), the prereq chapter introduces the
+base, and the SDK chapter documents the extension.
 
 ---
 
-## Phase 4 — Update `CLAUDE.md` (or equivalent AI context file)
+## Generic CLI architecture chapter
 
-If the project has a `CLAUDE.md` or similar AI assistant context file, update it to:
-- Point to `docs/ROADMAP.md` as the recommended entry point
-- Add a `docs/` directory description to the repository structure section
-- Add a "File Navigation Tips" table that maps common tasks to specific doc/source files
+`docs/libs/cli/cli_architecture.md` covers:
+
+- The **shell of an agent CLI** — entry script, config loading, session resume,
+  arg parsing, event loop bootstrap.
+- **Single-process vs. server-backed CLIs** — Claude Code is single-process;
+  deepagents-cli spawns a separate `langgraph dev` server and talks to it
+  over HTTP/SSE; this section explains why and what each choice buys you.
+- **TUI architectures** — Textual (deepagents-cli), Ink (Claude Code, Codex),
+  raw ANSI loops. Trade-offs in input handling, redraws, and accessibility.
+- **Streaming token displays** — SSE / chunked HTTP; backpressure; partial
+  rendering; cancellation.
+- **Slash command registries** — how a flat registry plus auto-complete plus
+  argument parsing scales to dozens of commands.
+- **Tool-call rendering and approval** — pretty-printing tool inputs, diff
+  rendering, HITL approval gates.
+- **MCP integration** — tool discovery, auth, transports.
+- **Sessions and persistence** — session files, message replay, thread IDs.
+- **Hooks** — user-extensible callbacks at lifecycle points.
+
+The chapter draws comparisons with Claude Code, Codex, and other agent CLIs
+based on **public documentation only** — no proprietary code is reproduced.
 
 ---
 
-## Quality Checklist
+## Model and cost strategy
 
-Before considering the docs complete, verify:
+This documentation is being produced by `claude-opus-4-7`, but the user has
+asked us to **reserve Opus for the most important work**:
 
-- [ ] Every significant source file has a corresponding `.md` in `docs/`
-- [ ] Every `docs/<dir>/` has a `README.md`
-- [ ] `docs/README.md` links to every major section
-- [ ] `docs/ROADMAP.md` has no forward dependencies (each stage only requires prior stages)
-- [ ] Time estimates in the roadmap are realistic (read 200 lines of source ≈ 15–30 min)
-- [ ] All links in docs files are relative and resolve correctly
-- [ ] The "High-Level Purpose" section of each doc is written for a newcomer, not an author
-- [ ] Architecture diagrams use plain ASCII (no Mermaid or external tools required)
-- [ ] No doc file contains line-by-line code commentary — that belongs in source code comments
+| Tier | Model | Used for |
+|---|---|---|
+| **Tier 1 (Opus 4.7)** | direct | `book_diary.md`, `instructions.md`, `CLAUDE.md`, `docs/ROADMAP.md`, `docs/README.md`, prerequisites chapters, generic CLI architecture chapter, deepagents `graph.py` / `_models.py` / `backends/protocol.py` / core middleware (`subagents`, `filesystem`), CLI core (`main`, `app`, `server*`, `remote_client`, `command_registry`, `sessions`, `hooks`, key widgets) |
+| **Tier 2 (Sonnet 4.6)** | via `Agent` subagents | remaining SDK middleware, remaining backends, profiles, peripheral CLI files, `libs/acp/`, `libs/evals/`, `libs/partners/`, `libs/repl/` |
+| **Tier 3 (Haiku 4.5)** | via `Agent` subagents | example-agent docs, trivial `__init__` re-exports, `_version.py` files |
+
+Subagents must be given the per-file template, the path to the source file, the
+path where the doc should be written, and a self-contained mini-context (one
+paragraph on where the file fits in the system).
 
 ---
 
-## Anti-patterns to Avoid
+## Resumability
+
+Every working session **must**:
+
+1. Read `book_diary.md` at the start.
+2. Update the per-stage status table after every meaningful step.
+3. Append to the session log on session end with a "what's left" note.
+4. Never delete the diary entries — they are the audit trail.
+
+If a session ends mid-file, leave the partially written doc in place but mark
+it `<!-- WIP: continue from §X -->` at the top so the next session can pick up.
+
+---
+
+## Quality checklist
+
+Before considering any stage complete, verify:
+
+- [ ] Every source file in scope has a corresponding `.md` (or is explicitly
+      called out as "skipped — see parent README" for trivial cases).
+- [ ] Every directory has a `README.md`.
+- [ ] System prompts and tool descriptions are quoted in full.
+- [ ] Block-level coverage: every public function and class has its own block.
+- [ ] No forward dependencies in the roadmap.
+- [ ] All internal links resolve (`./relative/path.md`).
+- [ ] Prerequisites chapters are self-contained — a reader who has never
+      touched LangChain or LangGraph can follow the rest of the docs.
+- [ ] CLI architecture chapter cites public sources for any comparison made.
+- [ ] `book_diary.md` reflects current state.
+
+---
+
+## Anti-patterns
 
 | Anti-pattern | Better approach |
 |---|---|
-| Documenting every line | Document purpose and API surface; trust the source code for implementation details |
-| Flat docs structure | Mirror the source hierarchy so docs are discoverable alongside the code |
-| Roadmap as a table of contents | Order by learning dependency, not by directory order |
-| Skipping README files for directories | Every directory is a conceptual boundary; explain it |
-| Writing for the author | Write for someone who has never seen the codebase before |
-| Over-documenting trivial files | One sentence for a `__init__.py` re-export is enough |
-| Under-documenting core abstractions | Central protocols, base classes, and public APIs deserve full treatment |
-| Using Mermaid or PlantUML | ASCII diagrams are universally renderable and version-control-friendly |
-
----
-
-## Worked Example: deepagents
-
-The `docs/` directory in this repository is the reference implementation of this process:
-
-- **187 `.md` files** covering ~130 source files + directory READMEs
-- **Mirrored hierarchy:** `libs/deepagents/deepagents/graph.py` → `docs/libs/deepagents/deepagents/graph.md`
-- **14-stage roadmap** in `docs/ROADMAP.md` from orientation (15 min) to advanced CI/CD
-- **Two navigation axes** in `docs/README.md`: by layer and by concept
-- **Directory READMEs** for every package directory, with class hierarchy diagrams and selection guides (e.g., `docs/libs/deepagents/deepagents/backends/README.md`)
-- **Individual file docs** follow the structure: High-Level Purpose → public symbols with parameter tables → architecture notes → see also
-
-Study `docs/libs/deepagents/deepagents/graph.md` as the canonical example of a well-documented core file, and `docs/libs/deepagents/deepagents/backends/README.md` as the canonical example of a well-written directory README.
+| Documenting individual lines | Document blocks (function/class), explain the logic of each block |
+| Skipping system prompts | Quote them in full — they're part of the design |
+| Burning Opus tokens on trivial re-exports | Delegate to Haiku via subagent |
+| Letting the diary go stale | Update after every step, even small ones |
+| Comparing CLIs by guessing internals | Cite public docs; admit uncertainty |
+| Inline LangGraph explanations in every file doc | Centralise in the prereq chapter, link from file docs |
+| Mermaid / external-tool diagrams | Plain ASCII — universally renderable |
+| Asking the user to re-confirm settled scope | Read `book_diary.md`'s "Decisions log" first |

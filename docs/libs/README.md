@@ -1,61 +1,38 @@
-# libs/ — Package Overview
+# `libs/`
 
-deepagents is a Python monorepo managed with `uv`. The `libs/` directory contains all publishable packages.
+> Package map for the monorepo. The SDK sits at the center; the CLI, ACP
+> adapter, evals, REPL, and partner packages wrap or exercise it.
 
----
-
-## Package Dependency Graph
+## Position in the system
 
 ```
-deepagents (SDK)          ← core; no CLI or TUI deps
-    ↑
-    ├── deepagents-cli    ← wraps SDK; adds Textual TUI + LangGraph server
-    ├── deepagents-acp    ← wraps SDK; exposes agent as ACP server
-    └── deepagents-evals  ← tests SDK behavior via CLI + Harbor benchmarks
-
-libs/partners/*
-    ├── daytona/          ← implements BackendProtocol via Daytona cloud sandbox
-    ├── modal/            ← implements BackendProtocol via Modal serverless
-    ├── quickjs/          ← implements BackendProtocol via in-process QuickJS
-    └── runloop/          ← implements BackendProtocol via Runloop cloud sandbox
+deepagents SDK
+  ├─ consumed by deepagents-cli
+  ├─ exposed through deepagents-acp
+  ├─ tested and benchmarked by deepagents-evals
+  ├─ extended by partner sandbox backends
+  └─ shares interpreter pieces with langchain-repl
 ```
 
-The SDK defines `BackendProtocol`. Every sandbox provider implements it independently, so the SDK has zero runtime dependencies on any specific cloud provider.
+The docs under this directory mirror the source tree under `libs/`. Start with
+[`deepagents/`](./deepagents/README.md), then use the roadmap to decide when to
+move into CLI, adapters, partners, and examples.
 
----
+## Packages
 
-## Package Descriptions
-
-| Package | Directory | Purpose |
+| Source package | Documentation | Role |
 |---|---|---|
-| `deepagents` | `libs/deepagents/` | Core SDK — `create_deep_agent()`, backends, middleware |
-| `deepagents-cli` | `libs/cli/` | CLI tool — Textual TUI, LangGraph server subprocess, sessions |
-| `deepagents-acp` | `libs/acp/` | ACP adapter — exposes any compiled agent as an ACP server |
-| `deepagents-evals` | `libs/evals/` | Evaluation suite — Harbor integration, benchmark metrics |
-| `deepagents-daytona` | `libs/partners/daytona/` | Daytona cloud sandbox backend |
-| `deepagents-modal` | `libs/partners/modal/` | Modal serverless sandbox backend |
-| `deepagents-quickjs` | `libs/partners/quickjs/` | In-process QuickJS sandbox backend |
-| `deepagents-runloop` | `libs/partners/runloop/` | Runloop cloud sandbox backend |
+| `libs/deepagents/` | [`deepagents/`](./deepagents/README.md) | Core SDK: `create_deep_agent()`, backend protocol, middleware stack, model/provider profiles. |
+| `libs/cli/` | [`cli/`](./cli/README.md) | Textual TUI and LangGraph server lifecycle. |
+| `libs/acp/` | [`acp/`](./acp/README.md) | ACP server adapter for a deep agent graph. |
+| `libs/evals/` | [`evals/`](./evals/README.md) | Evaluation suite and Harbor benchmark glue. |
+| `libs/partners/` | [`partners/`](./partners/README.md) | External sandbox backend implementations. |
+| `libs/repl/` | [`repl/`](./repl/README.md) | LangChain REPL interpreter and middleware. |
+| `libs/code/` | [`code/`](./code/README.md) | Placeholder package in this tree. |
 
----
+## Reading order
 
-## Choosing Between Packages
-
-**I want to build a custom agent programmatically:** use `deepagents` (SDK) directly. Call `create_deep_agent()` and invoke or stream the resulting `CompiledStateGraph`.
-
-**I want an interactive chat interface:** use `deepagents-cli` — it provides a full TUI and handles the LangGraph server lifecycle automatically.
-
-**I want to expose my agent to an ACP client:** wrap it with `deepagents-acp`. The ACP adapter handles session management and streaming.
-
-**I need to run untrusted code safely:** add one of the `partners/*` sandbox backends. They all implement `BackendProtocol`, so you can swap them without touching agent logic.
-
-**I want to measure agent quality:** use `deepagents-evals` to run the benchmark suite, or wire up custom evals via its Harbor integration.
-
----
-
-## See Also
-
-- [deepagents SDK docs](deepagents/deepagents/README.md)
-- [CLI docs](cli/deepagents_cli/README.md)
-- [ACP docs](acp/README.md)
-- [Evals docs](evals/README.md)
+Read the SDK first. The CLI and adapters make much more sense once you know
+that filesystem access goes through `BackendProtocol`, that agent behavior is
+mostly middleware, and that `create_deep_agent()` ultimately returns a compiled
+LangGraph agent.

@@ -1,100 +1,45 @@
 # `libs/cli/deepagents_cli/config.py`
 
-## High-Level Purpose
+> Broad CLI configuration module: settings, env bootstrap, glyphs, shell
+> safety, LangSmith links, and model construction.
 
-`config.py` manages all runtime configuration for the CLI. It provides the `settings` singleton — a lazily-initialized object that aggregates CLI flags, environment variables, dotenv files, and the TOML config file into a single coherent view. Other modules import `settings` and read properties from it; they never parse env vars or config files themselves.
+## Position in the system
 
----
+Used by both parent process and server subprocess. It centralizes user config
+and model creation.
 
-## Key Objects
+## Functions and classes
 
-### `settings` (module-level singleton)
+### Bootstrap and display helpers
 
-A `Settings` instance. Initialized lazily on first property access via `_ensure_bootstrap()`.
+`_find_dotenv_from_start_path()`, `_load_dotenv()`, `_ensure_bootstrap()`,
+`CharsetMode`, `Glyphs`, `_detect_charset_mode()`, `get_glyphs()`,
+`newline_shortcut()`, and `get_banner()` prepare environment and terminal UI
+presentation.
 
-**Key properties:**
+### `Settings` and `SessionState`
 
-| Property | Source | Default | Description |
-|---|---|---|---|
-| `model_name` | `--model` flag or `config.toml [models].default` | `"claude-sonnet-4-6"` | Active model spec |
-| `has_tavily` | `TAVILY_API_KEY` env var | `False` | Whether web search is available |
-| `shell_allow_list` | `--shell-allow-list` flag | `[]` | Allowed shell commands (non-interactive) |
-| `auto_approve` | `--auto-approve` flag | `False` | Disable HITL approvals |
-| `theme` | `config.toml [ui].theme` | `"default"` | TUI color theme |
-| `langsmith_project` | `LANGSMITH_PROJECT` env var | `None` | LangSmith project for traces |
-| `mcp_config_path` | `--mcp-config` flag | `None` | Path to MCP config file |
-| `agent_name` | `--agent` flag | `None` | Selected agent name |
+Store global config paths, provider settings, feature flags, session metadata,
+and runtime options.
 
-### `_ensure_bootstrap() → None`
+### Shell and LangSmith helpers
 
-Called once on first `settings` access. Loads configuration in this order:
+`contains_dangerous_patterns()`, `is_shell_command_allowed()`,
+`get_langsmith_project_name()`, `fetch_langsmith_project_url()`, and
+`build_langsmith_thread_url()` support safety and trace links.
 
-1. Project `.env` (in `$DEEPAGENTS_PROJECT_ROOT/.env` or current directory)
-2. Global `~/.deepagents/.env`
-3. CLI flags already parsed into `args` namespace
-4. Reads `~/.deepagents/config.toml` for TOML settings
+### Model construction
 
-Captures the original `LANGSMITH_PROJECT` before overwriting it with the CLI's project name, so traces are routed correctly.
+`detect_provider()`, `_get_default_model_spec()`, provider kwarg helpers,
+`ModelResult`, `_apply_profile_overrides()`, `create_model()`, and
+`validate_model_capabilities()` turn config into a usable chat model.
 
----
+### Lazy globals
 
-## Config File: `~/.deepagents/config.toml`
+`_get_console()`, `_get_settings()`, and `__getattr__()` defer expensive global
+construction until needed.
 
-```toml
-[models]
-default = "anthropic:claude-sonnet-4-6"
+## Gotchas
 
-[agents]
-recent = "my-agent"
-
-[ui]
-theme = "monokai"
-
-[warnings]
-suppress = ["update_available"]
-
-[async_subagents]
-my-researcher = {graph_id = "researcher", url = "https://deploy.langchain.com/..."}
-```
-
-**Sections:**
-
-| Section | Purpose |
-|---|---|
-| `[models]` | Default model and any provider overrides |
-| `[agents]` | Which agent was most recently selected |
-| `[ui]` | TUI theme preference |
-| `[warnings]` | Warnings to suppress (e.g., update notifications) |
-| `[async_subagents]` | Remote LangGraph deployments for async delegation |
-
----
-
-## `ProjectContext`
-
-A dataclass capturing the project-level context at CLI startup:
-
-| Field | Description |
-|---|---|
-| `cwd` | Current working directory |
-| `project_root` | Nearest ancestor dir containing `.git`, `pyproject.toml`, etc. |
-| `git_branch` | Active git branch, or `None` |
-
-Populated by `ProjectContext.from_user_cwd()`. Passed to the server subprocess via env vars so the agent's `LocalContextMiddleware` can inject accurate git/directory info.
-
----
-
-## Architecture Notes
-
-**Lazy initialization:** `settings` is not initialized at import time. This keeps `from deepagents_cli.config import settings` fast (used in many places). The actual bootstrap (dotenv loading, TOML parsing) runs only when a property is first accessed.
-
-**Thread safety:** Bootstrap is guarded by a `threading.Lock`. Multiple threads accessing `settings` simultaneously won't duplicate initialization.
-
-**Dotenv precedence:** The project `.env` is loaded first. The global `~/.deepagents/.env` is loaded second. Later loads don't overwrite already-set values (using `dotenv`'s `override=False` mode). This means project-level env vars take precedence over user-level ones.
-
----
-
-## See Also
-
-- [main.md](main.md) — reads `settings` for model and mode configuration
-- [agent.md](agent.md) — reads `settings` for tool configuration
-- [mcp_tools.md](mcp_tools.md) — reads `settings` for MCP config path
+Before changing this file, check whether the caller is parent CLI process,
+server subprocess, or both.

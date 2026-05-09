@@ -1,0 +1,36 @@
+# `libs/cli/deepagents_cli/deploy/frontend_dist/index.html`
+
+> HTML entry point for the bundled deploy frontend.
+
+## Position in the system
+
+`deploy/bundler.py:_copy_frontend_dist()` copies this file into the deployment
+bundle and replaces the `window.__DEEPAGENTS_CONFIG__` placeholder with JSON
+derived from the deploy config. The generated frontend then reads that global to
+choose the assistant ID, app name, auth provider, and optional prompt chips.
+
+## File contents
+
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/app/logo-light.svg" media="(prefers-color-scheme: light)" />
+    <link rel="icon" type="image/svg+xml" href="/app/logo-dark.svg" media="(prefers-color-scheme: dark)" />
+    <title>Deep Agent</title>
+    <script>window.__DEEPAGENTS_CONFIG__ = {"__PLACEHOLDER__":true};</script>
+    <script type="module" crossorigin src="/app/assets/index-DM3gptpu.js"></script>
+    <link rel="stylesheet" crossorigin href="/app/assets/index-Ddy7F6KI.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
+```
+
+## Gotchas
+
+The placeholder script is matched by a regex in `bundler.py`; changing its shape
+requires updating `_FRONTEND_PLACEHOLDER_RE` at the same time.

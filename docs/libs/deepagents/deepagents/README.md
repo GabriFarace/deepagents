@@ -1,58 +1,36 @@
-# `libs/deepagents/deepagents/` — Core SDK
+# `libs/deepagents/deepagents/`
 
-The `deepagents` SDK provides `create_deep_agent()` — a single factory function that assembles a fully configured LangGraph agent from composable pieces. Everything else in this package (backends, middleware, models) supports that factory.
+> Importable SDK package. The public surface is intentionally small, but the
+> package contains the main orchestration factory and the pluggable pieces it
+> assembles.
 
----
+## Position in the system
 
-## File Map
-
-| File | Role |
-|---|---|
-| [`graph.py`](graph.md) | `create_deep_agent()` — the public API entry point |
-| [`_models.py`](_models.md) | Model string → `BaseChatModel` resolution |
-| [`_tools.py`](graph.md) | Built-in tool helpers (used by graph.py) |
-| [`_excluded_middleware.py`](graph.md) | Validation of `exclude_middleware` parameter |
-| [`backends/`](backends/README.md) | Storage & execution backends (filesystem, state, sandbox, …) |
-| [`middleware/`](middleware/README.md) | Agent middleware (tools, skills, memory, HITL, summarization, …) |
-| [`profiles/`](graph.md) | Model-specific tuning profiles (OpenAI Responses API, etc.) |
-| [`__init__.py`](graph.md) | Public exports |
-
----
-
-## The Three-Layer Model
-
-```
-create_deep_agent()
-        │
-        ├─── Backend   — WHERE files and shell commands go
-        │    └─ BackendProtocol: ls, read, write, edit, glob, grep, execute
-        │
-        ├─── Middleware — WHAT the agent can do (wraps every model call)
-        │    └─ Stack of AgentMiddleware: injects tools, system prompt, etc.
-        │
-        └─── Model     — WHICH LLM makes decisions
-             └─ Any LangChain BaseChatModel
-```
-
-Separating these three concerns means you can swap any one without touching the others: change the backend (local → cloud sandbox), change the middleware (add a new tool), or change the model (Claude → GPT-4o) independently.
-
----
-
-## Quick Start
+Most user code imports from the package root:
 
 ```python
 from deepagents import create_deep_agent
-
-graph = create_deep_agent()  # defaults: Claude Sonnet 4.6, in-memory backend, standard middleware
-result = graph.invoke({"messages": [{"role": "user", "content": "List files here"}]})
 ```
 
-See [`graph.md`](graph.md) for the full parameter reference.
+That symbol is re-exported from `graph.py`. The factory then pulls in model
+profiles, provider profiles, backend implementations, and middleware classes to
+build the final LangGraph `CompiledStateGraph`.
 
----
+## Module map
 
-## See Also
+| Module | Doc | What to read it for |
+|---|---|---|
+| `graph.py` | [`graph.md`](./graph.md) | The complete assembly flow for a deep agent. |
+| `_models.py` | [`_models.md`](./_models.md) | Converting model strings into `BaseChatModel` instances and inspecting model identity. |
+| `_tools.py` | [`_tools.md`](./_tools.md) | Rewriting tool descriptions from harness profiles without mutating caller-owned tools. |
+| `_excluded_middleware.py` | `_excluded_middleware.md` | Profile-driven middleware exclusion validation. |
+| `backends/` | [`backends/`](./backends/README.md) | Backend protocol and implementations. |
+| `middleware/` | [`middleware/`](./middleware/README.md) | The bulk of agent behavior. |
+| `profiles/` | [`profiles/`](./profiles/README.md) | Model/provider-specific adjustments. |
 
-- [graph.md](graph.md) — full `create_deep_agent()` API
-- [backends/README.md](backends/README.md) — backend selection guide
-- [middleware/README.md](middleware/README.md) — middleware stack reference
+## Reading order
+
+Read [`graph.md`](./graph.md) first. It names almost every other SDK concept
+at the point where it is assembled. Then read the backend protocol before the
+filesystem middleware, because the middleware's tools are thin wrappers around
+backend methods.

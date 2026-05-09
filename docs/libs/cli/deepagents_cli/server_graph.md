@@ -1,61 +1,38 @@
 # `libs/cli/deepagents_cli/server_graph.py`
 
-## High-Level Purpose
+> Graph factory loaded inside the `langgraph dev` subprocess.
 
-`server_graph.py` is the module that runs **inside the LangGraph server subprocess**. It contains `make_graph()`, the factory function that LangGraph calls at server startup to obtain the compiled agent graph. This file is copied verbatim into the temporary workspace directory (see [server_manager.md](server_manager.md)), so it must be self-contained: all imports are relative to the CLI package, not to the workspace.
+## Position in the system
 
----
+The parent process copies this file into the temp workspace and points
+`langgraph.json` at `./server_graph.py:graph`. Importing this module constructs
+the graph.
 
-## Key Function
+## Functions and classes
 
-### `make_graph() → CompiledStateGraph`
+### `_get_mcp_session_manager()`
 
-Called once by `langgraph dev` at module import time. Returns the compiled LangGraph state graph that serves all incoming requests.
+Lazily creates the process-wide MCP session manager. It lives in the server
+event loop and is reused by MCP tool calls.
 
-**Steps:**
+### `_build_tools(config, project_context)`
 
-1. **Read server config** — Calls `ServerConfig.from_env()` which reads `DEEPAGENTS_CLI_SERVER_*` environment variables set by `server_manager.py`:
-   - `model` — model spec string
-   - `mcp_config_path` — path to MCP config (if any)
-   - `agent_name` — selected agent (if any)
-   - `auto_approve` — whether HITL is disabled
-   - `interrupt_shell_only` — whether only shell commands require approval
+Creates built-in tools (`fetch_url`, optional `web_search`) and, unless MCP is
+disabled, resolves MCP tools and server metadata. MCP discovery during import is
+stateless; runtime sessions are opened lazily.
 
-2. **Load MCP tools** — calls `resolve_and_load_mcp_tools(config.mcp_config_path)` to discover and load any configured MCP server tools.
+### `make_graph()`
 
-3. **Load subagent specs** — calls `load_subagents(agent_name)` to read subagent YAML files from `~/.deepagents/{agent_name}/agents/`.
+Reads `ServerConfig.from_env()`, reloads settings from project context, creates
+the model, builds tools, creates sandbox backend when configured, loads async
+subagents, and calls `create_cli_agent()`.
 
-4. **Create the agent** — calls `create_cli_agent(...)` (from `agent.py`) with the resolved config, MCP tools, and subagent specs.
+### Module-level `graph`
 
-5. **Return the compiled graph** — the graph is compiled with an `AsyncSqliteSaver` checkpointer that reads the DB path from `DEEPAGENTS_CLI_DB_PATH`.
+`graph = make_graph()` is evaluated at import time. Failures are logged and
+printed to stderr so parent health checks can surface startup errors.
 
----
+## Gotchas
 
-## `ServerConfig`
-
-A simple dataclass read from environment variables. All fields have defaults.
-
-| Field | Env var | Default |
-|---|---|---|
-| `model` | `DEEPAGENTS_CLI_SERVER_MODEL` | `"claude-sonnet-4-6"` |
-| `mcp_config_path` | `DEEPAGENTS_CLI_SERVER_MCP_CONFIG` | `None` |
-| `agent_name` | `DEEPAGENTS_CLI_SERVER_AGENT` | `None` |
-| `auto_approve` | `DEEPAGENTS_CLI_SERVER_AUTO_APPROVE` | `False` |
-| `interrupt_shell_only` | `DEEPAGENTS_CLI_SERVER_INTERRUPT_SHELL_ONLY` | `False` |
-
----
-
-## Architecture Notes
-
-**Separation of concerns:** This file is deliberately thin — it reads config, calls the three loader functions, and returns the result. All logic lives in `agent.py`, `mcp_tools.py`, and `subagents.py`. This keeps the "what to wire up" logic in `server_graph.py` and the "how to wire it" logic in the respective modules.
-
-**Module boundary:** `server_graph.py` is copied into a generated workspace, so it runs in a context where `deepagents_cli` is installed as a package. Any refactoring that changes the module's public interface will break the copy.
-
----
-
-## See Also
-
-- [agent.md](agent.md) — `create_cli_agent()` called from here
-- [server_manager.md](server_manager.md) — copies this file and sets env vars
-- [mcp_tools.md](mcp_tools.md) — `resolve_and_load_mcp_tools()`
-- [subagents.md](subagents.md) — `load_subagents()`
+Globals here live in the server subprocess only. The Textual process cannot
+read them directly.

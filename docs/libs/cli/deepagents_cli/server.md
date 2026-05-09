@@ -1,62 +1,45 @@
 # `libs/cli/deepagents_cli/server.py`
 
-## High-Level Purpose
+> Low-level `langgraph dev` process lifecycle helpers.
 
-`server.py` contains `ServerProcess`, the class that manages the `langgraph dev` subprocess. It handles starting, monitoring, and stopping the server process, as well as capturing its stdout/stderr for display in the TUI. It is a thin wrapper around `asyncio.create_subprocess_exec` with readiness detection and clean shutdown.
+## Position in the system
 
----
+`server_manager.py` scaffolds a temp workspace, then this module starts and
+stops the LangGraph server process. It knows about ports, config files, health
+checks, subprocess logs, and environment, not about Textual widgets.
 
-## Key Class
+## Functions and classes
+
+### Port and URL helpers
+
+`_port_in_use()`, `_find_free_port()`, and `get_server_url()` support local
+server binding and remote-client construction.
+
+### `generate_langgraph_json(...)`
+
+Writes the `langgraph.json` file used by `langgraph dev`, including graph ref,
+optional env file, and optional checkpointer factory path.
+
+### `_scoped_env_overrides(overrides)`
+
+Temporarily mutates `os.environ`, rolling back on exception. It isolates failed
+startup attempts from later attempts.
+
+### `wait_for_server_healthy(...)`
+
+Polls `{url}/ok` until healthy, failing early if the subprocess exits and
+including a tail of logs for diagnosis.
+
+### `_build_server_cmd()` and `_build_server_env()`
+
+Construct subprocess argv and environment for `python -m langgraph_cli dev`.
 
 ### `ServerProcess`
 
-Represents the lifecycle of a single `langgraph dev` process.
+Owns process start/stop. It chooses host/port, starts the subprocess, waits for
+health, exposes the URL, and terminates or kills the process during cleanup.
 
-**Constructor parameters:**
+## Gotchas
 
-| Parameter | Type | Purpose |
-|---|---|---|
-| `workspace_dir` | `Path` | Directory where `langgraph.json` lives |
-| `port` | `int` | Port to bind the server to |
-| `env` | `dict[str, str]` | Environment variables for the subprocess |
-
-**Key methods:**
-
-#### `async start() → None`
-
-Starts the server subprocess:
-```
-uv run langgraph dev --host 127.0.0.1 --port <port> --no-browser
-```
-Sets up async readers for stdout and stderr. Sends server logs to a ring buffer (accessible as `self.recent_logs`) and optionally to the TUI status area.
-
-#### `async wait_until_ready(timeout_s=30) → bool`
-
-Polls `GET http://127.0.0.1:{port}/ok` every 200ms. Returns `True` when the server responds with HTTP 200. Returns `False` if `timeout_s` expires.
-
-The readiness check also monitors the subprocess exit code — if the process dies during startup (e.g., bad `langgraph.json`), `wait_until_ready` returns `False` immediately so the TUI can report an error rather than spinning.
-
-#### `async stop() → None`
-
-Sends `SIGTERM` to the subprocess and waits up to 5 seconds. If the process doesn't exit, sends `SIGKILL`. Called from `CLIApp.on_unmount()` during TUI shutdown.
-
-**Properties:**
-
-- `is_running: bool` — `True` if the subprocess is alive
-- `recent_logs: list[str]` — Last N lines of combined stdout+stderr (used for error reporting)
-- `url: str` — `http://127.0.0.1:{port}`
-
----
-
-## Architecture Notes
-
-**Log capture:** Stdout and stderr are read line-by-line in async tasks. Lines matching `INFO:` or `ERROR:` patterns from uvicorn/langgraph are parsed and displayed in the TUI's startup overlay. This gives users visibility into server startup without cluttering the main transcript.
-
-**Exit detection:** An async watchdog task monitors `process.returncode`. If the server crashes after startup, it posts a `ServerCrashed` message to the TUI, which shows an error banner and disables the input field.
-
----
-
-## See Also
-
-- [server_manager.md](server_manager.md) — creates `ServerProcess` and calls `start()`
-- [server_graph.md](server_graph.md) — code that runs inside the server process
+Generated graph/checkpointer paths are relative to the temp workspace because
+the subprocess imports them from its own cwd.
